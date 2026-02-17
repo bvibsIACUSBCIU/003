@@ -14,7 +14,9 @@ import {
   ArrowRightLeft,
   Link as LinkIcon,
   Menu,
-  X
+  X,
+  ArrowUpRight,
+  ArrowDownRight
 } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 
@@ -46,6 +48,11 @@ const generateChartData = (points: number): ChartDataPoint[] => {
   return data;
 };
 
+// Helper: Get Beijing Date String (YYYY-MM-DD)
+const getBeijingDate = () => {
+  return new Date().toLocaleString("en-CA", { timeZone: "Asia/Shanghai" }).substring(0, 10);
+};
+
 const App: React.FC = () => {
   // Context
   const { t, lang, toggleLanguage } = useTranslation();
@@ -53,11 +60,14 @@ const App: React.FC = () => {
   // State
   const [stats, setStats] = useState<ContractStats>(INITIAL_STATS);
   
+  // Daily Flow State (USDT & USDX)
+  const [usdtChange, setUsdtChange] = useState<number>(0);
+  const [usdxChange, setUsdxChange] = useState<number>(0);
+  
   // Custom Wallets State (persisted in localStorage)
   const [monitoredWallets, setMonitoredWallets] = useState<MonitoredWallet[]>(() => {
     const saved = localStorage.getItem('xone_monitored_wallets');
     return saved ? JSON.parse(saved) : [
-       // Default example if empty
        { address: "0x1234567890123456789012345678901234567890", label: "做市商 A" }
     ];
   });
@@ -78,7 +88,6 @@ const App: React.FC = () => {
   const handleAddWallet = (address: string, label: string) => {
     if (monitoredWallets.some(w => w.address.toLowerCase() === address.toLowerCase())) return;
     setMonitoredWallets(prev => [...prev, { address, label }]);
-    // Trigger fetch immediately
     fetchData();
   };
 
@@ -92,15 +101,54 @@ const App: React.FC = () => {
       const newOnes = wallets.filter(w => !existing.has(w.address.toLowerCase()));
       return [...prev, ...newOnes];
     });
-    // Trigger fetch
     setTimeout(fetchData, 100);
+  };
+
+  // Daily Flow Logic (Pure Frontend)
+  const processDailyFlow = (currentStats: Partial<ContractStats>) => {
+    if (!currentStats.balanceUsdt || !currentStats.balanceUsdx) return;
+
+    const todayStr = getBeijingDate();
+    const storageKey = `xone_daily_start`;
+    const storedData = localStorage.getItem(storageKey);
+    
+    let baselineData;
+
+    if (storedData) {
+      const parsed = JSON.parse(storedData);
+      // If the stored data is from a previous day (Beijing Time), we reset the baseline to NOW.
+      if (parsed.date !== todayStr) {
+         baselineData = {
+           date: todayStr,
+           usdt: currentStats.balanceUsdt,
+           usdx: currentStats.balanceUsdx
+         };
+         localStorage.setItem(storageKey, JSON.stringify(baselineData));
+         setUsdtChange(0);
+         setUsdxChange(0);
+      } else {
+        // It's the same day, use the stored open price
+        baselineData = parsed;
+        setUsdtChange(currentStats.balanceUsdt - baselineData.usdt);
+        setUsdxChange(currentStats.balanceUsdx - baselineData.usdx);
+      }
+    } else {
+      // First time ever running
+      baselineData = {
+        date: todayStr,
+        usdt: currentStats.balanceUsdt,
+        usdx: currentStats.balanceUsdx
+      };
+      localStorage.setItem(storageKey, JSON.stringify(baselineData));
+      setUsdtChange(0);
+      setUsdxChange(0);
+    }
   };
 
   // Data Fetching
   const fetchData = useCallback(async () => {
     setIsLoadingChain(true);
     
-    // Pass the current list of wallets to the service
     const { stats: newStats, vipData: newVipData } = await fetchRealChainData(monitoredWallets);
     
     setStats(prev => ({
@@ -108,8 +156,10 @@ const App: React.FC = () => {
       ...newStats,  
     }));
 
-    setVipData(newVipData);
+    // Process daily flow changes
+    processDailyFlow(newStats);
 
+    setVipData(newVipData);
     setLastUpdated(new Date());
     setIsLoadingChain(false);
   }, [monitoredWallets]);
@@ -240,22 +290,36 @@ const App: React.FC = () => {
            <StatCard 
               label={t('totalBalance')}
               value={`$${stats.balanceUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-              trend="up"
-              trendValue="2.1%"
               icon={<Wallet size={18} />}
             />
-            <StatCard 
-              label={t('remainingUsdt')}
-              value={stats.balanceUsdt.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              subValue="USDT"
-              icon={<DollarSign size={18} />}
-            />
-             <StatCard 
-              label={t('remainingUsdx')}
-              value={stats.balanceUsdx.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              subValue="USDX"
-              icon={<Coins size={18} />}
-            />
+            
+            {/* USDT Card - Fund Inflow Monitor */}
+            <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 md:p-6 relative overflow-hidden group hover:border-green-500/50 transition-colors duration-300">
+               <div className="flex justify-between items-start mb-2">
+                  <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">USDT 储备 (24h)</p>
+                  <DollarSign size={16} className="text-green-400" />
+               </div>
+               <h3 className="text-xl md:text-2xl font-bold text-white font-mono">{stats.balanceUsdt.toLocaleString(undefined, { maximumFractionDigits: 0 })}</h3>
+               <div className={`flex items-center mt-2 text-xs md:text-sm font-bold ${usdtChange >= 0 ? 'text-xone-success' : 'text-xone-danger'}`}>
+                  {usdtChange >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                  <span className="ml-1">{usdtChange > 0 ? '+' : ''}{usdtChange.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+                  <span className="ml-2 text-[10px] text-gray-500 font-normal border border-gray-700 rounded px-1">业绩{usdtChange >= 0 ? '增长' : '流出'}</span>
+               </div>
+            </div>
+
+            {/* USDX Card - Fund Outflow Monitor */}
+            <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 md:p-6 relative overflow-hidden group hover:border-cyan-500/50 transition-colors duration-300">
+               <div className="flex justify-between items-start mb-2">
+                  <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">USDX 总量 (24h)</p>
+                  <Coins size={16} className="text-cyan-400" />
+               </div>
+               <h3 className="text-xl md:text-2xl font-bold text-white font-mono">{stats.balanceUsdx.toLocaleString(undefined, { maximumFractionDigits: 0 })}</h3>
+                <div className={`flex items-center mt-2 text-xs md:text-sm font-bold text-gray-300`}>
+                  {usdxChange >= 0 ? <ArrowUpRight size={14} className="text-gray-400" /> : <ArrowDownRight size={14} className="text-gray-400" />}
+                  <span className="ml-1">{usdxChange > 0 ? '+' : ''}{usdxChange.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+               </div>
+            </div>
+
             <StatCard 
               label={t('remainingB3')}
               value={stats.balanceB3.toLocaleString(undefined, { maximumFractionDigits: 0 })}

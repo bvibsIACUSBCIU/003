@@ -1,8 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { WalletPortfolio, MonitoredWallet, WalletInteraction } from '../types';
+import { WalletPortfolio, MonitoredWallet } from '../types';
 import { useTranslation } from '../contexts/LanguageContext';
 import { EXPLORER_URL } from '../constants';
-import { Shield, Copy, Plus, Trash2, Wallet, Download, Upload, X, ExternalLink, ArrowRightLeft, ArrowUpRight, ArrowDownLeft, ChevronDown, ChevronRight } from 'lucide-react';
+import { Shield, Copy, Plus, Trash2, Wallet, Download, Upload, X, ExternalLink, ChevronRight, DollarSign, Coins } from 'lucide-react';
 
 interface KeyAccountsPanelProps {
   portfolios: WalletPortfolio[];
@@ -10,16 +10,6 @@ interface KeyAccountsPanelProps {
   onRemoveWallet: (address: string) => void;
   onImportWallets: (wallets: MonitoredWallet[]) => void;
 }
-
-// Helper to generate mock activity for drill-down demo
-const generateMockActivity = (address: string): WalletInteraction[] => {
-  return [
-    { hash: "0x123...abc", method: "Swap", type: "in", token: "USDT", amount: 50000, time: "10 mins ago", counterparty: "Uniswap V2" },
-    { hash: "0x456...def", method: "Transfer", type: "out", token: "B3", amount: 2000, time: "2 hrs ago", counterparty: "0x999...111" },
-    { hash: "0x789...ghi", method: "Approve", type: "out", token: "USDX", amount: 0, time: "5 hrs ago", counterparty: "Router" },
-    { hash: "0xabc...jkl", method: "Mint", type: "in", token: "B3", amount: 15000, time: "1 day ago", counterparty: "Null Address" },
-  ];
-};
 
 export const KeyAccountsPanel: React.FC<KeyAccountsPanelProps> = ({ portfolios, onAddWallet, onRemoveWallet, onImportWallets }) => {
   const { t } = useTranslation();
@@ -238,100 +228,95 @@ export const KeyAccountsPanel: React.FC<KeyAccountsPanelProps> = ({ portfolios, 
       {/* Wallet Detail Modal */}
       {selectedWallet && (
         <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200 fixed top-0 left-0 right-0 bottom-0 h-screen">
-           <div className="bg-xone-900 border border-xone-700 rounded-xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+           <div className="bg-xone-900 border border-xone-700 rounded-xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden relative" onClick={(e) => e.stopPropagation()}>
               
               {/* Modal Header */}
-              <div className="p-4 md:p-6 border-b border-xone-800 flex justify-between items-start bg-gradient-to-r from-xone-900 to-indigo-950 sticky top-0">
+              <div className="p-6 border-b border-xone-800 flex justify-between items-start bg-gradient-to-r from-xone-900 to-indigo-950">
                  <div>
-                    <h2 className="text-lg md:text-xl font-bold text-white flex items-center gap-2">
+                    <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
                        {selectedWallet.label}
-                       <span className="text-xs bg-xone-800 text-gray-400 px-2 py-0.5 rounded border border-xone-700 hidden sm:inline">WATCHLIST</span>
                     </h2>
-                    <div className="flex items-center gap-2 mt-2">
-                       <span className="font-mono text-xs md:text-sm text-gray-400 truncate max-w-[150px] md:max-w-none">{selectedWallet.address}</span>
+                    <div className="flex items-center gap-2 mt-2 bg-black/20 px-3 py-1 rounded-full w-fit border border-white/5">
+                       <span className="font-mono text-sm text-gray-300">{selectedWallet.address}</span>
                        <Copy size={14} className="text-gray-500 cursor-pointer hover:text-white" onClick={() => copyToClipboard(selectedWallet.address)} />
-                       <a href={`${EXPLORER_URL}/address/${selectedWallet.address}`} target="_blank" rel="noreferrer" className="ml-2 flex items-center gap-1 text-xs text-xone-accent hover:underline">
-                          <span className="hidden sm:inline">{t('viewExplorer')}</span> <ExternalLink size={10} />
-                       </a>
                     </div>
                  </div>
-                 <button onClick={() => setSelectedWallet(null)} className="text-gray-500 hover:text-white p-2">
+                 <button onClick={() => setSelectedWallet(null)} className="text-gray-500 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors">
                     <X size={24} />
                  </button>
               </div>
 
               {/* Modal Body */}
-              <div className="p-4 md:p-6 overflow-y-auto">
-                 {/* Asset Summary */}
-                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6 md:mb-8">
-                    <div className="bg-xone-800/50 p-3 rounded border border-xone-700/50">
-                       <div className="text-[10px] md:text-xs text-gray-500 mb-1">TOTAL VALUE</div>
-                       <div className="text-base md:text-lg font-bold text-white">${selectedWallet.totalValueUsd.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
-                    </div>
-                    <div className="bg-xone-800/50 p-3 rounded border border-xone-700/50">
-                       <div className="text-[10px] md:text-xs text-gray-500 mb-1">B3 BALANCE</div>
-                       <div className="text-base md:text-lg font-mono text-indigo-300">{selectedWallet.balanceB3.toLocaleString()}</div>
-                    </div>
-                    <div className="bg-xone-800/50 p-3 rounded border border-xone-700/50">
-                       <div className="text-[10px] md:text-xs text-gray-500 mb-1">USDT BALANCE</div>
-                       <div className="text-base md:text-lg font-mono text-green-300">{selectedWallet.balanceUsdt.toLocaleString()}</div>
-                    </div>
-                     <div className="bg-xone-800/50 p-3 rounded border border-xone-700/50">
-                       <div className="text-[10px] md:text-xs text-gray-500 mb-1">USDX BALANCE</div>
-                       <div className="text-base md:text-lg font-mono text-cyan-300">{selectedWallet.balanceUsdx.toLocaleString()}</div>
+              <div className="p-6 overflow-y-auto flex-1 bg-[#0b1121]">
+                 
+                 {/* Total Value Hero */}
+                 <div className="text-center mb-8">
+                    <div className="text-sm text-gray-400 uppercase tracking-widest mb-1">{t('totalValue')}</div>
+                    <div className="text-4xl md:text-5xl font-bold text-white tracking-tight">
+                       ${selectedWallet.totalValueUsd.toLocaleString(undefined, {maximumFractionDigits: 0})}
                     </div>
                  </div>
 
-                 {/* Recent Activity (Mock) */}
-                 <div>
-                    <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-4 border-l-4 border-xone-accent pl-3">
-                       {t('recentActivity')}
-                    </h3>
-                    <div className="bg-xone-800/30 rounded-lg overflow-hidden border border-xone-700/30">
-                       <table className="w-full text-sm text-left">
-                          <thead className="bg-xone-900/50 text-gray-500 font-mono text-xs uppercase hidden md:table-header-group">
-                             <tr>
-                                <th className="p-3">{t('type')}</th>
-                                <th className="p-3">{t('token')}</th>
-                                <th className="p-3">{t('amount')}</th>
-                                <th className="p-3">{t('time')}</th>
-                                <th className="p-3">Method</th>
-                             </tr>
-                          </thead>
-                          <tbody className="divide-y divide-xone-700/30 block md:table-row-group">
-                             {generateMockActivity(selectedWallet.address).map((tx, idx) => (
-                                <tr key={idx} className="hover:bg-xone-700/20 block md:table-row">
-                                   <td className="p-3 block md:table-cell flex justify-between md:block">
-                                      <span className="md:hidden text-gray-500 text-xs">Type</span>
-                                      <span className={`flex items-center gap-1 font-bold text-xs px-2 py-0.5 rounded-full w-fit ${tx.type === 'in' ? 'bg-green-900/30 text-green-400 border border-green-800' : 'bg-red-900/30 text-red-400 border border-red-800'}`}>
-                                         {tx.type === 'in' ? <ArrowDownLeft size={12} /> : <ArrowUpRight size={12} />}
-                                         {tx.type === 'in' ? 'IN' : 'OUT'}
-                                      </span>
-                                   </td>
-                                   <td className="p-3 font-medium text-white block md:table-cell flex justify-between md:block">
-                                      <span className="md:hidden text-gray-500 text-xs">Token</span>
-                                      {tx.token}
-                                   </td>
-                                   <td className="p-3 font-mono text-gray-300 block md:table-cell flex justify-between md:block">
-                                      <span className="md:hidden text-gray-500 text-xs">Amount</span>
-                                      {tx.amount.toLocaleString()}
-                                   </td>
-                                   <td className="p-3 text-gray-500 text-xs block md:table-cell flex justify-between md:block">
-                                      <span className="md:hidden text-gray-500 text-xs">Time</span>
-                                      {tx.time}
-                                   </td>
-                                   <td className="p-3 text-gray-400 text-xs font-mono md:bg-transparent block md:table-cell text-right md:text-left">
-                                      <span className="bg-black/20 rounded px-2 py-1">{tx.method}</span>
-                                   </td>
-                                </tr>
-                             ))}
-                          </tbody>
-                       </table>
-                       <div className="p-2 text-center text-xs text-gray-600 italic bg-xone-900/30">
-                          * Simulated data. Connect Indexer API for real history.
+                 {/* Big Asset Cards - Focusing on the requested data */}
+                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                    
+                    {/* USDT Card */}
+                    <div className="bg-xone-800 rounded-xl p-5 border border-xone-700 relative overflow-hidden group">
+                       <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                          <DollarSign size={80} />
                        </div>
+                       <div className="flex items-center gap-2 mb-2">
+                          <div className="w-8 h-8 rounded-full bg-green-900/30 flex items-center justify-center text-green-400 border border-green-800">
+                             <DollarSign size={16} />
+                          </div>
+                          <span className="text-gray-400 font-bold">USDT</span>
+                       </div>
+                       <div className="text-2xl font-mono text-white font-bold">{selectedWallet.balanceUsdt.toLocaleString()}</div>
                     </div>
+
+                    {/* USDX Card */}
+                    <div className="bg-xone-800 rounded-xl p-5 border border-xone-700 relative overflow-hidden group">
+                       <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                          <Coins size={80} />
+                       </div>
+                       <div className="flex items-center gap-2 mb-2">
+                          <div className="w-8 h-8 rounded-full bg-cyan-900/30 flex items-center justify-center text-cyan-400 border border-cyan-800">
+                             <Coins size={16} />
+                          </div>
+                          <span className="text-gray-400 font-bold">USDX</span>
+                       </div>
+                       <div className="text-2xl font-mono text-white font-bold">{selectedWallet.balanceUsdx.toLocaleString()}</div>
+                    </div>
+
+                    {/* B3 Card */}
+                    <div className="bg-xone-800 rounded-xl p-5 border border-xone-700 relative overflow-hidden group">
+                       <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                          <Coins size={80} />
+                       </div>
+                       <div className="flex items-center gap-2 mb-2">
+                          <div className="w-8 h-8 rounded-full bg-indigo-900/30 flex items-center justify-center text-indigo-400 border border-indigo-800">
+                             <Coins size={16} />
+                          </div>
+                          <span className="text-gray-400 font-bold">B3</span>
+                       </div>
+                       <div className="text-2xl font-mono text-white font-bold">{selectedWallet.balanceB3.toLocaleString()}</div>
+                    </div>
+
                  </div>
+
+                 {/* Call to Action for History */}
+                 <div className="mt-8 pt-8 border-t border-xone-800 flex flex-col items-center">
+                    <p className="text-gray-500 text-sm mb-4">View detailed transaction history on XONE Explorer</p>
+                    <a 
+                       href={`${EXPLORER_URL}/address/${selectedWallet.address}`} 
+                       target="_blank" 
+                       rel="noreferrer" 
+                       className="flex items-center gap-2 px-8 py-4 bg-xone-accent hover:bg-cyan-400 text-xone-900 rounded-lg font-bold transition-all shadow-lg shadow-cyan-500/20 w-full md:w-auto justify-center"
+                    >
+                       {t('viewExplorer')} <ExternalLink size={18} />
+                    </a>
+                 </div>
+
               </div>
            </div>
         </div>

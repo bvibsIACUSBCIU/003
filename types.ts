@@ -1,3 +1,4 @@
+
 export interface ContractStats {
   currentBalance: number;
   balanceUsdx: number;
@@ -52,4 +53,12 @@ export interface WalletInteraction {
   amount: number;
   time: string;
   counterparty: string;
+}
+
+// Analytics Snapshot
+export interface AssetSnapshot {
+  date: string; // YYYY-MM-DD
+  month: string; // YYYY-MM
+  balanceUsd: number;
+  timestamp: number;
 }
