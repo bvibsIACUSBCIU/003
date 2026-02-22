@@ -21,9 +21,9 @@ import {
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 
 // Types & Services
-import { ContractStats, VipAccountsData, ChartDataPoint, MonitoredWallet } from './types';
+import { ContractStats, VipAccountsData, ChartDataPoint, MonitoredWallet, LargeTransaction } from './types';
 import { INITIAL_STATS, TARGET_CONTRACT_ADDRESS, B3_LP_ADDRESS, USDX_USDT_LP_ADDRESS } from './constants';
-import { fetchRealChainData } from './services/chainService';
+import { fetchRealChainData, fetchLargeTransactions } from './services/chainService';
 
 // Context
 import { useTranslation } from './contexts/LanguageContext';
@@ -31,6 +31,7 @@ import { useTranslation } from './contexts/LanguageContext';
 // Components
 import { StatCard } from './components/StatCard';
 import { KeyAccountsPanel } from './components/KeyAccountsPanel';
+import { LargeTransactionsPanel } from './components/LargeTransactionsPanel';
 
 // Mock Chart Data Generator
 const generateChartData = (points: number): ChartDataPoint[] => {
@@ -73,6 +74,7 @@ const App: React.FC = () => {
   });
 
   const [vipData, setVipData] = useState<VipAccountsData>({ portfolios: [] });
+  const [largeTransactions, setLargeTransactions] = useState<LargeTransaction[]>([]);
   const [chartData, setChartData] = useState<ChartDataPoint[]>(generateChartData(24));
   const [isLoadingChain, setIsLoadingChain] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
@@ -149,7 +151,13 @@ const App: React.FC = () => {
   const fetchData = useCallback(async () => {
     setIsLoadingChain(true);
     
-    const { stats: newStats, vipData: newVipData } = await fetchRealChainData(monitoredWallets);
+    // Parallel fetch
+    const [chainData, largeTxs] = await Promise.all([
+      fetchRealChainData(monitoredWallets),
+      fetchLargeTransactions()
+    ]);
+
+    const { stats: newStats, vipData: newVipData } = chainData;
     
     setStats(prev => ({
       ...prev,
@@ -160,6 +168,7 @@ const App: React.FC = () => {
     processDailyFlow(newStats);
 
     setVipData(newVipData);
+    setLargeTransactions(largeTxs);
     setLastUpdated(new Date());
     setIsLoadingChain(false);
   }, [monitoredWallets]);
@@ -198,10 +207,10 @@ const App: React.FC = () => {
         <div className="h-16 lg:h-20 flex items-center justify-between px-6 border-b border-xone-800 bg-xone-900">
           <div className="flex items-center">
             <div className="w-8 h-8 bg-gradient-to-tr from-indigo-500 to-cyan-400 rounded flex items-center justify-center text-white font-bold text-lg shadow-[0_0_15px_rgba(59,130,246,0.5)]">
-              X
+              B
             </div>
             <span className="ml-3 font-mono font-bold text-lg tracking-tighter text-white">
-              TRADER<span className="text-xone-accent">OS</span>
+              B-3<span className="text-xone-accent"> | XONE</span>
             </span>
           </div>
           <button onClick={toggleMobileMenu} className="lg:hidden text-gray-400">
@@ -479,13 +488,18 @@ const App: React.FC = () => {
         </div>
 
         {/* Bottom Row: CUSTOM ASSET RADAR (Dynamic Wallet List) */}
-        <div className="grid grid-cols-1 gap-6 pb-6">
-          <KeyAccountsPanel 
-            portfolios={vipData.portfolios}
-            onAddWallet={handleAddWallet}
-            onRemoveWallet={handleRemoveWallet}
-            onImportWallets={handleImportWallets}
-          />
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 pb-6">
+          <div className="xl:col-span-2">
+             <KeyAccountsPanel 
+              portfolios={vipData.portfolios}
+              onAddWallet={handleAddWallet}
+              onRemoveWallet={handleRemoveWallet}
+              onImportWallets={handleImportWallets}
+            />
+          </div>
+          <div className="xl:col-span-1">
+             <LargeTransactionsPanel transactions={largeTransactions} />
+          </div>
         </div>
 
       </main>

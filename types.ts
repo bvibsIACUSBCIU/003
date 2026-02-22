@@ -62,3 +62,13 @@ export interface AssetSnapshot {
   balanceUsd: number;
   timestamp: number;
 }
+
+export interface LargeTransaction {
+  hash: string;
+  from: string;
+  to: string;
+  value: number;
+  symbol: 'USDX' | 'USDT';
+  timestamp: number;
+  blockNumber: number;
+}

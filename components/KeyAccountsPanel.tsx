@@ -82,7 +82,7 @@ export const KeyAccountsPanel: React.FC<KeyAccountsPanelProps> = ({ portfolios, 
             </div>
             <div>
               <h3 className="text-base md:text-lg font-bold text-white tracking-wide">{t('keyAccounts')}</h3>
-              <p className="text-xs text-gray-400 hidden sm:block">Monitor specific wallets on XONE Chain</p>
+              <p className="text-xs text-gray-400 hidden sm:block">Monitor market holdings on XONE Chain</p>
             </div>
           </div>
           

@@ -24,7 +24,7 @@ const translations: Record<Language, Record<string, string>> = {
     pegRate: 'Peg Rate',
     price: 'Price',
     poolReserves: 'Real-time Pool Reserves',
-    keyAccounts: 'Custom Address Monitor',
+    keyAccounts: 'Market Holdings Monitor',
     addWallet: 'Add Wallet',
     labelPlaceholder: 'Label (e.g. Market Maker)',
     addressPlaceholder: '0x...',
@@ -56,7 +56,11 @@ const translations: Record<Language, Record<string, string>> = {
     amount: 'Amount',
     time: 'Time',
     close: 'Close',
-    contractAddress: 'LP Contract'
+    contractAddress: 'LP Contract',
+    largeTransactions: 'Large Swaps (>1000)',
+    noLargeTransactions: 'No large transactions found in the last 24h.',
+    from: 'From',
+    tx: 'Tx'
   },
   zh: {
     dashboard: '操盘手看板',
@@ -73,7 +77,7 @@ const translations: Record<Language, Record<string, string>> = {
     pegRate: '锚定汇率',
     price: '实时价格',
     poolReserves: '实时池底储备',
-    keyAccounts: '自定义地址监控',
+    keyAccounts: '市场持币监控',
     addWallet: '添加监控地址',
     labelPlaceholder: '备注 (例如: 做市商A)',
     addressPlaceholder: '0x地址...',
@@ -105,7 +109,11 @@ const translations: Record<Language, Record<string, string>> = {
     amount: '数量',
     time: '时间',
     close: '关闭',
-    contractAddress: 'LP合约地址'
+    contractAddress: 'LP合约地址',
+    largeTransactions: '大额兑换监控 (>1000)',
+    noLargeTransactions: '过去24小时未发现大额兑换。',
+    from: '发送方',
+    tx: '哈希'
   }
 };
 
