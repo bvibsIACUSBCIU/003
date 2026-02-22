@@ -6,16 +6,17 @@ import { ExternalLink, Clock, AlertTriangle } from 'lucide-react';
 
 interface LargeTransactionsPanelProps {
   transactions: LargeTransaction[];
+  fullHeight?: boolean;
 }
 
-export const LargeTransactionsPanel: React.FC<LargeTransactionsPanelProps> = ({ transactions }) => {
+export const LargeTransactionsPanel: React.FC<LargeTransactionsPanelProps> = ({ transactions, fullHeight = false }) => {
   const { t } = useTranslation();
 
   const formatAddress = (addr: string) => `${addr.substring(0, 6)}...${addr.substring(38)}`;
   const formatTime = (ts: number) => new Date(ts).toLocaleString();
 
   return (
-    <div className="bg-xone-800 border border-xone-700 rounded-xl overflow-hidden shadow-lg flex flex-col h-full">
+    <div className={`bg-xone-800 border border-xone-700 rounded-xl overflow-hidden shadow-lg flex flex-col ${fullHeight ? 'h-full' : 'h-full'}`}>
       <div className="p-4 border-b border-xone-700 bg-gradient-to-r from-xone-800 to-amber-900/20 flex items-center gap-3">
         <div className="p-2 bg-amber-500/20 rounded-lg text-amber-400">
           <AlertTriangle size={20} />
@@ -26,7 +27,7 @@ export const LargeTransactionsPanel: React.FC<LargeTransactionsPanelProps> = ({ 
         </div>
       </div>
 
-      <div className="overflow-auto flex-1 max-h-[400px]">
+      <div className={`overflow-auto flex-1 ${fullHeight ? '' : 'max-h-[400px]'}`}>
         <table className="w-full text-left border-collapse">
           <thead className="sticky top-0 bg-xone-900/95 backdrop-blur-sm z-10">
             <tr className="text-gray-500 text-xs uppercase tracking-wider font-mono border-b border-xone-700/50">
