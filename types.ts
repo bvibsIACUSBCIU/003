@@ -3,11 +3,11 @@ export interface ContractStats {
   currentBalance: number;
   balanceUsdx: number;
   balanceUsdt: number;
-  balanceB3: number; 
-  // Liquidity Pool 1: B3 / USDX
-  lpBalanceB3: number;
+  balanceBox: number; 
+  // Liquidity Pool 1: BOX / USDX
+  lpBalanceBox: number;
   lpBalanceUsdx: number;
-  b3Price: number; // Real-time calculated price
+  boxPrice: number; // Real-time calculated price
   
   // Liquidity Pool 2: USDX / USDT (Stable Pair)
   lp2BalanceUsdx: number;
@@ -36,7 +36,7 @@ export interface WalletPortfolio extends MonitoredWallet {
   balanceXoc: number;
   balanceUsdt: number;
   balanceUsdx: number;
-  balanceB3: number;
+  balanceBox: number;
   totalValueUsd: number;
 }
 
@@ -71,4 +71,23 @@ export interface LargeTransaction {
   symbol: 'USDX' | 'USDT';
   timestamp: number;
   blockNumber: number;
+}
+
+export interface AddressTransaction {
+  hash: string;
+  from: string;
+  to: string;
+  value: number;
+  symbol: string;
+  timestamp: number;
+  blockNumber: number;
+  type: 'in' | 'out';
+}
+
+export interface DailySwapStats {
+  todayUsdtToUsdx: number;
+  todayUsdxToUsdt: number;
+  yesterdayUsdtToUsdx: number;
+  yesterdayUsdxToUsdt: number;
+  lastUpdatedBlock: number;
 }

@@ -147,8 +147,8 @@ export const KeyAccountsPanel: React.FC<KeyAccountsPanelProps> = ({ portfolios, 
                    <div className="text-cyan-200 font-mono">{item.balanceUsdx.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
                 </div>
                  <div className="bg-xone-900/50 p-2 rounded border border-xone-700/30">
-                   <div className="text-indigo-600 mb-1">B3</div>
-                   <div className="text-indigo-200 font-mono">{item.balanceB3.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                   <div className="text-indigo-600 mb-1">BOX</div>
+                   <div className="text-indigo-200 font-mono">{item.balanceBox.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
                 </div>
              </div>
 
@@ -208,7 +208,7 @@ export const KeyAccountsPanel: React.FC<KeyAccountsPanelProps> = ({ portfolios, 
                 
                 <td className="p-4 text-right font-mono text-gray-300">{item.balanceUsdt.toLocaleString(undefined, {maximumFractionDigits: 2})}</td>
                 <td className="p-4 text-right font-mono text-cyan-300">{item.balanceUsdx.toLocaleString(undefined, {maximumFractionDigits: 2})}</td>
-                <td className="p-4 text-right font-mono text-indigo-300">{item.balanceB3.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
+                <td className="p-4 text-right font-mono text-indigo-300">{item.balanceBox.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
                 <td className="p-4 text-right font-mono text-gray-400">{item.balanceXoc.toLocaleString(undefined, {maximumFractionDigits: 4})}</td>
                 <td className="p-4 text-right font-mono font-bold text-white">${item.totalValueUsd.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
                 <td className="p-4 text-center">
@@ -288,7 +288,7 @@ export const KeyAccountsPanel: React.FC<KeyAccountsPanelProps> = ({ portfolios, 
                        <div className="text-2xl font-mono text-white font-bold">{selectedWallet.balanceUsdx.toLocaleString()}</div>
                     </div>
 
-                    {/* B3 Card */}
+                    {/* BOX Card */}
                     <div className="bg-xone-800 rounded-xl p-5 border border-xone-700 relative overflow-hidden group">
                        <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                           <Coins size={80} />
@@ -297,9 +297,9 @@ export const KeyAccountsPanel: React.FC<KeyAccountsPanelProps> = ({ portfolios, 
                           <div className="w-8 h-8 rounded-full bg-indigo-900/30 flex items-center justify-center text-indigo-400 border border-indigo-800">
                              <Coins size={16} />
                           </div>
-                          <span className="text-gray-400 font-bold">B3</span>
+                          <span className="text-gray-400 font-bold">BOX</span>
                        </div>
-                       <div className="text-2xl font-mono text-white font-bold">{selectedWallet.balanceB3.toLocaleString()}</div>
+                       <div className="text-2xl font-mono text-white font-bold">{selectedWallet.balanceBox.toLocaleString()}</div>
                     </div>
 
                  </div>

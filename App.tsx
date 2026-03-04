@@ -22,9 +22,9 @@ import {
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 
 // Types & Services
-import { ContractStats, VipAccountsData, ChartDataPoint, MonitoredWallet, LargeTransaction } from './types';
-import { INITIAL_STATS, TARGET_CONTRACT_ADDRESS, B3_LP_ADDRESS, USDX_USDT_LP_ADDRESS } from './constants';
-import { fetchRealChainData, fetchLargeTransactions } from './services/chainService';
+import { ContractStats, VipAccountsData, ChartDataPoint, MonitoredWallet, LargeTransaction, DailySwapStats } from './types';
+import { INITIAL_STATS, TARGET_CONTRACT_ADDRESS, BOX_LP_ADDRESS, USDX_USDT_LP_ADDRESS } from './constants';
+import { fetchRealChainData, fetchLargeTransactions, fetchDailySwapStats } from './services/chainService';
 
 // Context
 import { useTranslation } from './contexts/LanguageContext';
@@ -89,7 +89,16 @@ const App: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  
+
+  // Daily Swap Stats State
+  const [dailySwapStats, setDailySwapStats] = useState<DailySwapStats>({ 
+    todayUsdtToUsdx: 0, 
+    todayUsdxToUsdt: 0, 
+    yesterdayUsdtToUsdx: 0, 
+    yesterdayUsdxToUsdt: 0,
+    lastUpdatedBlock: 0
+  });
+
   // Persist wallets
   useEffect(() => {
     localStorage.setItem('xone_monitored_wallets', JSON.stringify(monitoredWallets));
@@ -185,29 +194,35 @@ const App: React.FC = () => {
   const fetchData = useCallback(async () => {
     setIsLoadingChain(true);
     
-    // Parallel fetch
-    const [chainData, vaultChainData, largeTxs] = await Promise.all([
-      fetchRealChainData(monitoredWallets),
-      fetchRealChainData(multiSigVaults),
-      fetchLargeTransactions()
-    ]);
+    try {
+      // Sequential fetch to avoid rate limiting
+      const chainData = await fetchRealChainData(monitoredWallets);
+      const vaultChainData = await fetchRealChainData(multiSigVaults);
+      const largeTxs = await fetchLargeTransactions();
+      const dailyStats = await fetchDailySwapStats();
 
-    const { stats: newStats, vipData: newVipData } = chainData;
-    const { vipData: newVaultData } = vaultChainData;
-    
-    setStats(prev => ({
-      ...prev,
-      ...newStats,  
-    }));
+      setDailySwapStats(dailyStats);
 
-    // Process daily flow changes
-    processDailyFlow(newStats);
+      const { stats: newStats, vipData: newVipData } = chainData;
+      const { vipData: newVaultData } = vaultChainData;
+      
+      setStats(prev => ({
+        ...prev,
+        ...newStats,  
+      }));
 
-    setVipData(newVipData);
-    setVaultData(newVaultData);
-    setLargeTransactions(largeTxs);
-    setLastUpdated(new Date());
-    setIsLoadingChain(false);
+      // Process daily flow changes
+      processDailyFlow(newStats);
+
+      setVipData(newVipData);
+      setVaultData(newVaultData);
+      setLargeTransactions(largeTxs);
+      setLastUpdated(new Date());
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    } finally {
+      setIsLoadingChain(false);
+    }
   }, [monitoredWallets, multiSigVaults]);
 
   useEffect(() => {
@@ -246,7 +261,7 @@ const App: React.FC = () => {
               B
             </div>
             <span className="ml-3 font-mono font-bold text-lg tracking-tighter text-white">
-              B-3<span className="text-xone-accent"> | XONE</span>
+              BOX<span className="text-xone-accent"> | XONE</span>
             </span>
           </div>
         </div>
@@ -412,10 +427,55 @@ const App: React.FC = () => {
 
                 <StatCard 
                   label={t('remainingB3')}
-                  value={stats.balanceB3.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  subValue="B3"
+                  value={stats.balanceBox.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  subValue="BOX"
                   icon={<Coins size={18} className="text-indigo-400" />}
                 />
+            </div>
+
+            {/* Daily Swap Monitor */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                {/* USDT -> USDX */}
+                <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 relative overflow-hidden">
+                    <div className="absolute right-0 top-0 bottom-0 w-1 bg-green-500/50"></div>
+                    <div className="flex items-center justify-between mb-3">
+                        <p className="text-gray-400 text-xs uppercase tracking-wider">{t('todayUsdtToUsdx')}</p>
+                        <div className="h-8 w-8 rounded-full bg-green-500/10 flex items-center justify-center border border-green-500/30">
+                            <ArrowDownRight size={16} className="text-green-400" />
+                        </div>
+                    </div>
+                    <div className="flex justify-between items-end">
+                        <div>
+                            <p className="text-xs text-gray-500 mb-1">{t('today')}</p>
+                            <h3 className="text-xl font-bold text-white font-mono">{dailySwapStats.todayUsdtToUsdx.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-xs text-gray-500">USDT</span></h3>
+                        </div>
+                        <div className="text-right">
+                            <p className="text-xs text-gray-500 mb-1">{t('yesterday')}</p>
+                            <h3 className="text-lg font-bold text-gray-400 font-mono">{dailySwapStats.yesterdayUsdtToUsdx.toLocaleString(undefined, { maximumFractionDigits: 2 })}</h3>
+                        </div>
+                    </div>
+                </div>
+
+                {/* USDX -> USDT */}
+                <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 relative overflow-hidden">
+                    <div className="absolute right-0 top-0 bottom-0 w-1 bg-cyan-500/50"></div>
+                    <div className="flex items-center justify-between mb-3">
+                        <p className="text-gray-400 text-xs uppercase tracking-wider">{t('todayUsdxToUsdt')}</p>
+                        <div className="h-8 w-8 rounded-full bg-cyan-500/10 flex items-center justify-center border border-cyan-500/30">
+                            <ArrowUpRight size={16} className="text-cyan-400" />
+                        </div>
+                    </div>
+                    <div className="flex justify-between items-end">
+                        <div>
+                            <p className="text-xs text-gray-500 mb-1">{t('today')}</p>
+                            <h3 className="text-xl font-bold text-white font-mono">{dailySwapStats.todayUsdxToUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-xs text-gray-500">USDX</span></h3>
+                        </div>
+                        <div className="text-right">
+                            <p className="text-xs text-gray-500 mb-1">{t('yesterday')}</p>
+                            <h3 className="text-lg font-bold text-gray-400 font-mono">{dailySwapStats.yesterdayUsdxToUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })}</h3>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* Middle Row: LP Monitors (Split Layout) */}
@@ -429,7 +489,7 @@ const App: React.FC = () => {
                       <h3 className="font-bold text-white tracking-wide text-sm md:text-base">{t('traderPair')}</h3>
                     </div>
                     <div className="flex gap-2 text-xs">
-                       <span className="flex items-center gap-1 bg-black/20 text-gray-400 px-2 py-1 rounded border border-gray-700 cursor-pointer hover:text-white" onClick={() => handleCopyAddress(B3_LP_ADDRESS)}>
+                       <span className="flex items-center gap-1 bg-black/20 text-gray-400 px-2 py-1 rounded border border-gray-700 cursor-pointer hover:text-white" onClick={() => handleCopyAddress(BOX_LP_ADDRESS)}>
                           <LinkIcon size={10} /> <span className="hidden sm:inline">{t('contractAddress')}</span><span className="sm:hidden">LP</span>
                        </span>
                     </div>
@@ -440,9 +500,9 @@ const App: React.FC = () => {
                       <span className="text-gray-400 text-xs md:text-sm font-mono uppercase">{t('price')}</span>
                       <div className="text-right">
                          <span className="text-2xl md:text-3xl font-bold text-white font-mono tracking-tight">
-                            {stats.b3Price > 0 ? stats.b3Price.toFixed(4) : "0.0000"} 
+                            {stats.boxPrice > 0 ? stats.boxPrice.toFixed(4) : "0.0000"} 
                          </span>
-                         <span className="text-[10px] md:text-xs text-gray-500 font-normal ml-2">USDX/B3</span>
+                         <span className="text-[10px] md:text-xs text-gray-500 font-normal ml-2">USDX/BOX</span>
                       </div>
                     </div>
 
@@ -466,9 +526,9 @@ const App: React.FC = () => {
                         <div className="flex justify-between items-center bg-xone-900/40 p-2 rounded">
                           <div className="flex items-center gap-2">
                             <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
-                            <span className="text-gray-400 text-xs">B3</span>
+                            <span className="text-gray-400 text-xs">BOX</span>
                           </div>
-                          <span className="font-mono text-indigo-300 text-sm">{stats.lpBalanceB3.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+                          <span className="font-mono text-indigo-300 text-sm">{stats.lpBalanceBox.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
                         </div>
 
                         <div className="flex justify-between items-center bg-xone-900/40 p-2 rounded">
