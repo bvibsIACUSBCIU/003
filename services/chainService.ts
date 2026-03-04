@@ -29,33 +29,50 @@ const getProvider = () => {
   return _provider;
 };
 
-// Helper to fetch logs in chunks
+// Helper to fetch logs with adaptive chunking
 const fetchLogsInChunks = async (contract: Contract, filter: any, startBlock: number, endBlock: number) => {
-  const logs = [];
-  const chunkSize = 200; // Further reduced from 500 to 200
-  for (let i = startBlock; i <= endBlock; i += chunkSize) {
-    const toBlock = Math.min(i + chunkSize - 1, endBlock);
-    let retries = 5; // Increased retries
-    while (retries > 0) {
-      try {
-        const chunkLogs = await contract.queryFilter(filter, i, toBlock);
-        logs.push(...chunkLogs);
-        break; // Success
-      } catch (e) {
-        retries--;
-        console.warn(`Failed to fetch logs from ${i} to ${toBlock}. Retries left: ${retries}`, e);
-        if (retries === 0) {
-           console.error(`Permanently failed to fetch logs from ${i} to ${toBlock}`);
-        } else {
-           // Exponential backoff: 2s, 4s, 6s, 8s, 10s
-           const waitTime = (6 - retries) * 2000;
-           await new Promise(resolve => setTimeout(resolve, waitTime)); 
-        }
+  const allLogs: any[] = [];
+  let currentStart = startBlock;
+  let chunkSize = 100; // Start with a conservative chunk size
+
+  while (currentStart <= endBlock) {
+    const currentEnd = Math.min(currentStart + chunkSize - 1, endBlock);
+    
+    try {
+      // Attempt to fetch logs for the current chunk
+      const logs = await contract.queryFilter(filter, currentStart, currentEnd);
+      allLogs.push(...logs);
+      
+      // Success: Move to next chunk
+      currentStart = currentEnd + 1;
+      
+      // If successful, we can try to slightly increase chunk size to speed up, 
+      // but cap it at 500 to avoid hitting limits again.
+      if (chunkSize < 500) {
+        chunkSize = Math.min(chunkSize * 2, 500);
+      }
+      
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 50)); 
+
+    } catch (e: any) {
+      console.warn(`Failed to fetch logs ${currentStart}-${currentEnd} (Size: ${chunkSize}). Retrying with smaller chunk...`);
+      
+      // Halve the chunk size
+      chunkSize = Math.floor(chunkSize / 2);
+      
+      // If chunk size gets too small (0), we failed even with a single block
+      if (chunkSize < 1) {
+        console.error(`Failed to fetch block ${currentStart}. Skipping block to proceed.`);
+        currentStart++; // Skip just this block
+        chunkSize = 5; // Reset chunk size to try to recover speed
+      } else {
+        // Add a backoff delay before retrying the same start block with smaller chunk
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
-    await new Promise(resolve => setTimeout(resolve, 500)); // Increased delay to 500ms
   }
-  return logs;
+  return allLogs;
 };
 
 // Helper to throttle promises
@@ -71,21 +88,23 @@ const throttlePromises = async <T>(items: any[], fn: (item: any) => Promise<T>, 
 };
 
 // Generic Retry Helper
-const retryOperation = async <T>(operation: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
+const retryOperation = async <T>(operation: () => Promise<T>, retries = 3, baseDelay = 1000): Promise<T> => {
   for (let i = 0; i < retries; i++) {
     try {
       return await operation();
     } catch (error) {
       if (i === retries - 1) throw error;
-      console.warn(`Operation failed, retrying (${i + 1}/${retries})...`, error);
-      await new Promise(resolve => setTimeout(resolve, delay * (i + 1))); // Linear backoff
+      const delay = baseDelay * Math.pow(2, i); // Exponential backoff: 1s, 2s, 4s
+      console.warn(`Operation failed, retrying (${i + 1}/${retries}) in ${delay}ms...`, error);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
   throw new Error("Operation failed after retries");
 };
 
 export const fetchRealChainData = async (
-  monitoredWallets: MonitoredWallet[] = []
+  monitoredWallets: MonitoredWallet[] = [],
+  fetchVolume: boolean = true
 ): Promise<{stats: Partial<ContractStats>, vipData: VipAccountsData}> => {
   try {
     const provider = getProvider();
@@ -143,63 +162,64 @@ export const fetchRealChainData = async (
     let volume24h = 0;
     let fees24h = 0;
 
-    try {
-        const currentBlock = await retryOperation(() => provider.getBlockNumber());
-        const blocks24h = 28800; // ~24h @ 3s/block
-        const fromBlock = Math.max(0, currentBlock - blocks24h);
+    if (fetchVolume) {
+        try {
+            const currentBlock = await retryOperation(() => provider.getBlockNumber());
+            const blocks24h = 28800; // ~24h @ 3s/block
+            const fromBlock = Math.max(0, currentBlock - blocks24h);
 
-        const getPairVolume = async (lpAddress: string, quoteToken: string, quoteDecimals: number) => {
-            try {
-                const lpContract = new Contract(lpAddress, [
-                    "event Swap(address indexed sender, uint amount0In, uint amount1In, uint amount0Out, uint amount1Out, address indexed to)",
-                    "function token0() view returns (address)"
-                ], provider);
+            const getPairVolume = async (lpAddress: string, quoteToken: string, quoteDecimals: number) => {
+                try {
+                    const lpContract = new Contract(lpAddress, [
+                        "event Swap(address indexed sender, uint amount0In, uint amount1In, uint amount0Out, uint amount1Out, address indexed to)",
+                        "function token0() view returns (address)"
+                    ], provider);
 
-                let token0 = "";
-                try { 
-                    token0 = await retryOperation(() => lpContract.token0()); 
-                } catch { 
-                    // Fallback
-                    token0 = quoteToken.toLowerCase() < (lpAddress === BOX_LP_ADDRESS ? BOX_ADDRESS : USDT_ADDRESS).toLowerCase() ? quoteToken : (lpAddress === BOX_LP_ADDRESS ? BOX_ADDRESS : USDT_ADDRESS);
-                }
-                
-                const isQuoteToken0 = token0.toLowerCase() === quoteToken.toLowerCase();
-                const filter = lpContract.filters.Swap();
-                const logs = await fetchLogsInChunks(lpContract, filter, fromBlock, currentBlock);
-                
-                let vol = 0;
-                for (const log of logs) {
-                    if ('args' in log) {
-                        // @ts-ignore
-                        const args = log.args;
-                        if (isQuoteToken0) {
-                            const inVal = parseFloat(formatUnits(args[1], quoteDecimals));
-                            const outVal = parseFloat(formatUnits(args[3], quoteDecimals));
-                            vol += inVal + outVal;
-                        } else {
-                            const inVal = parseFloat(formatUnits(args[2], quoteDecimals));
-                            const outVal = parseFloat(formatUnits(args[4], quoteDecimals));
-                            vol += inVal + outVal;
+                    let token0 = "";
+                    try { 
+                        token0 = await retryOperation(() => lpContract.token0()); 
+                    } catch { 
+                        // Fallback
+                        token0 = quoteToken.toLowerCase() < (lpAddress === BOX_LP_ADDRESS ? BOX_ADDRESS : USDT_ADDRESS).toLowerCase() ? quoteToken : (lpAddress === BOX_LP_ADDRESS ? BOX_ADDRESS : USDT_ADDRESS);
+                    }
+                    
+                    const isQuoteToken0 = token0.toLowerCase() === quoteToken.toLowerCase();
+                    const filter = lpContract.filters.Swap();
+                    const logs = await fetchLogsInChunks(lpContract, filter, fromBlock, currentBlock);
+                    
+                    let vol = 0;
+                    for (const log of logs) {
+                        if ('args' in log) {
+                            // @ts-ignore
+                            const args = log.args;
+                            if (isQuoteToken0) {
+                                const inVal = parseFloat(formatUnits(args[1], quoteDecimals));
+                                const outVal = parseFloat(formatUnits(args[3], quoteDecimals));
+                                vol += inVal + outVal;
+                            } else {
+                                const inVal = parseFloat(formatUnits(args[2], quoteDecimals));
+                                const outVal = parseFloat(formatUnits(args[4], quoteDecimals));
+                                vol += inVal + outVal;
+                            }
                         }
                     }
+                    return vol;
+                } catch (e) {
+                    console.warn(`Failed to fetch volume for ${lpAddress}`, e);
+                    return 0;
                 }
-                return vol;
-            } catch (e) {
-                console.warn(`Failed to fetch volume for ${lpAddress}`, e);
-                return 0;
-            }
-        };
+            };
 
-        const [volBox, volStable] = await Promise.all([
-            getPairVolume(BOX_LP_ADDRESS, USDX_ADDRESS, 18),
-            getPairVolume(USDX_USDT_LP_ADDRESS, USDT_ADDRESS, 6)
-        ]);
-        
-        volume24h = volBox + volStable;
-        fees24h = volume24h * 0.003;
-    } catch (e) {
-        console.error("Failed to calculate 24h volume", e);
-        // Fallback to 0 if calculation fails
+            // Execute sequentially to reduce RPC load
+            const volBox = await getPairVolume(BOX_LP_ADDRESS, USDX_ADDRESS, 18);
+            const volStable = await getPairVolume(USDX_USDT_LP_ADDRESS, USDT_ADDRESS, 6);
+            
+            volume24h = volBox + volStable;
+            fees24h = volume24h * 0.003;
+        } catch (e) {
+            console.error("Failed to calculate 24h volume", e);
+            // Fallback to 0 if calculation fails
+        }
     }
 
     // 7. Fetch Portfolios for Monitored Wallets (Throttled)
@@ -308,7 +328,7 @@ export const fetchLargeTransactions = async (): Promise<LargeTransaction[]> => {
           if (value > 1000) {
             let timestamp = blockCache[log.blockNumber];
             if (!timestamp) {
-              const block = await retryOperation(() => log.getBlock());
+              const block = await retryOperation(() => log.getBlock()) as any;
               if (block) {
                 timestamp = block.timestamp * 1000;
                 blockCache[log.blockNumber] = timestamp;
@@ -331,10 +351,9 @@ export const fetchLargeTransactions = async (): Promise<LargeTransaction[]> => {
       }
     };
 
-    await Promise.all([
-      processLogs(logsUsdx, 'USDX', 18),
-      processLogs(logsUsdt, 'USDT', 6)
-    ]);
+    // Process logs sequentially
+    await processLogs(logsUsdx, 'USDX', 18);
+    await processLogs(logsUsdt, 'USDT', 6);
 
     // Sort by timestamp desc
     return transactions.sort((a, b) => b.timestamp - a.timestamp);
@@ -429,7 +448,7 @@ export const fetchAddressHistory = async (address: string): Promise<{
             
             let timestamp = blockCache[log.blockNumber];
             if (!timestamp) {
-              const block = await retryOperation(() => log.getBlock());
+              const block = await retryOperation(() => log.getBlock()) as any;
               if (block) {
                 timestamp = block.timestamp * 1000;
                 blockCache[log.blockNumber] = timestamp;
@@ -452,10 +471,9 @@ export const fetchAddressHistory = async (address: string): Promise<{
         }
       };
 
-      await Promise.all([
-        processLogs(logsIn, 'in'),
-        processLogs(logsOut, 'out')
-      ]);
+      // Process logs sequentially
+      await processLogs(logsIn, 'in');
+      await processLogs(logsOut, 'out');
     }
 
     return {
@@ -531,11 +549,9 @@ export const fetchDailySwapStats = async (): Promise<{
     // Yesterday 00:00 Local
     const yesterdayStartTimestamp = todayStartTimestamp - 86400;
 
-    // Find Start Blocks
-    const [yesterdayStartBlock, todayStartBlock] = await Promise.all([
-        findBlockByTimestamp(provider, yesterdayStartTimestamp, currentBlock),
-        findBlockByTimestamp(provider, todayStartTimestamp, currentBlock)
-    ]);
+    // Find Start Blocks sequentially
+    const yesterdayStartBlock = await findBlockByTimestamp(provider, yesterdayStartTimestamp, currentBlock);
+    const todayStartBlock = await findBlockByTimestamp(provider, todayStartTimestamp, currentBlock);
 
     // Determine Token0
     let token0 = "";

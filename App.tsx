@@ -192,36 +192,49 @@ const App: React.FC = () => {
 
   // Data Fetching
   const fetchData = useCallback(async () => {
-    setIsLoadingChain(true);
+    // Only set loading true if we don't have data yet (first load)
+    if (stats.currentBalance === 0) {
+        setIsLoadingChain(true);
+    }
     
     try {
-      // Sequential fetch to avoid rate limiting
-      const chainData = await fetchRealChainData(monitoredWallets);
-      const vaultChainData = await fetchRealChainData(multiSigVaults);
-      const largeTxs = await fetchLargeTransactions();
-      const dailyStats = await fetchDailySwapStats();
-
-      setDailySwapStats(dailyStats);
-
-      const { stats: newStats, vipData: newVipData } = chainData;
-      const { vipData: newVaultData } = vaultChainData;
+      // 1. Fast Path: Fetch Basic Stats (No Volume) & VIP Data
+      // This ensures the UI becomes interactive quickly
+      const basicChainData = await fetchRealChainData(monitoredWallets, false);
+      const vaultChainData = await fetchRealChainData(multiSigVaults, false);
       
+      // Update state immediately with basic data
       setStats(prev => ({
         ...prev,
-        ...newStats,  
+        ...basicChainData.stats,
       }));
+      setVipData(basicChainData.vipData);
+      setVaultData(vaultChainData.vipData);
+      
+      // Clear loading state NOW so user sees data
+      setIsLoadingChain(false);
 
-      // Process daily flow changes
-      processDailyFlow(newStats);
+      // 2. Slow Path: Fetch Volume & Logs in background
+      // We don't await this to block the UI, but we update state when it finishes
+      fetchRealChainData(monitoredWallets, true).then((fullChainData) => {
+         setStats(prev => ({
+            ...prev,
+            volume24h: fullChainData.stats.volume24h || prev.volume24h,
+            fees24h: fullChainData.stats.fees24h || prev.fees24h,
+         }));
+      }).catch(e => console.warn("Background volume fetch failed", e));
 
-      setVipData(newVipData);
-      setVaultData(newVaultData);
-      setLargeTransactions(largeTxs);
+      // 3. Other async data
+      fetchLargeTransactions().then(setLargeTransactions).catch(e => console.warn("Large tx fetch failed", e));
+      fetchDailySwapStats().then(setDailySwapStats).catch(e => console.warn("Daily swap fetch failed", e));
+
+      // Process daily flow changes (using basic stats is fine for this)
+      processDailyFlow(basicChainData.stats);
+
       setLastUpdated(new Date());
     } catch (error) {
       console.error("Error fetching data:", error);
-    } finally {
-      setIsLoadingChain(false);
+      setIsLoadingChain(false); // Ensure loading is cleared on error
     }
   }, [monitoredWallets, multiSigVaults]);
 
@@ -426,7 +439,7 @@ const App: React.FC = () => {
                 </div>
 
                 <StatCard 
-                  label={t('remainingB3')}
+                  label={t('remainingBox')}
                   value={stats.balanceBox.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   subValue="BOX"
                   icon={<Coins size={18} className="text-indigo-400" />}
@@ -481,7 +494,7 @@ const App: React.FC = () => {
             {/* Middle Row: LP Monitors (Split Layout) */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-6 mb-6">
               
-              {/* Card 1: B3/USDX (Trading Pair) */}
+              {/* Card 1: BOX/USDX (Trading Pair) */}
               <div className="bg-xone-800 border border-xone-700 rounded-xl overflow-hidden flex flex-col shadow-lg relative group">
                  <div className="p-4 border-b border-xone-700 flex justify-between items-center bg-gradient-to-r from-xone-800 to-indigo-900/20">
                     <div className="flex items-center gap-2">
@@ -511,12 +524,12 @@ const App: React.FC = () => {
                         <ResponsiveContainer width="100%" height="100%">
                         <AreaChart data={chartData}>
                           <defs>
-                            <linearGradient id="colorB3" x1="0" y1="0" x2="0" y2="1">
+                            <linearGradient id="colorBox" x1="0" y1="0" x2="0" y2="1">
                               <stop offset="5%" stopColor="#818cf8" stopOpacity={0.3}/>
                               <stop offset="95%" stopColor="#818cf8" stopOpacity={0}/>
                             </linearGradient>
                           </defs>
-                          <Area type="monotone" dataKey="value" stroke="#818cf8" strokeWidth={2} fillOpacity={1} fill="url(#colorB3)" />
+                          <Area type="monotone" dataKey="value" stroke="#818cf8" strokeWidth={2} fillOpacity={1} fill="url(#colorBox)" />
                         </AreaChart>
                       </ResponsiveContainer>
                     </div>
