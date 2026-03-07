@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  LayoutDashboard, 
-  Wallet, 
-  Settings, 
+import {
+  LayoutDashboard,
+  Wallet,
+  Settings,
   RefreshCw,
   Copy,
   Globe,
@@ -62,16 +62,16 @@ const App: React.FC = () => {
 
   // State
   const [stats, setStats] = useState<ContractStats>(INITIAL_STATS);
-  
+
   // Daily Flow State (USDT & USDX)
   const [usdtChange, setUsdtChange] = useState<number>(0);
   const [usdxChange, setUsdxChange] = useState<number>(0);
-  
+
   // Custom Wallets State (persisted in localStorage)
   const [monitoredWallets, setMonitoredWallets] = useState<MonitoredWallet[]>(() => {
     const saved = localStorage.getItem('xone_monitored_wallets');
     return saved ? JSON.parse(saved) : [
-       { address: "0x1234567890123456789012345678901234567890", label: "做市商 A" }
+      { address: "0x1234567890123456789012345678901234567890", label: "做市商 A" }
     ];
   });
 
@@ -90,13 +90,19 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Daily Swap Stats State
-  const [dailySwapStats, setDailySwapStats] = useState<DailySwapStats>({ 
-    todayUsdtToUsdx: 0, 
-    todayUsdxToUsdt: 0, 
-    yesterdayUsdtToUsdx: 0, 
-    yesterdayUsdxToUsdt: 0,
-    lastUpdatedBlock: 0
+  // Daily Swap Stats State — initialize from localStorage for instant display
+  const [dailySwapStats, setDailySwapStats] = useState<DailySwapStats>(() => {
+    try {
+      const stored = localStorage.getItem("xone_daily_swap_stats_processed");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        // Use cached data if it's less than 1 hour old
+        if (parsed && parsed.ts && Date.now() - parsed.ts < 3600000) {
+          return parsed.data;
+        }
+      }
+    } catch { /* ignore */ }
+    return { todayUsdtToUsdx: 0, todayUsdxToUsdt: 0, yesterdayUsdtToUsdx: 0, yesterdayUsdxToUsdt: 0, lastUpdatedBlock: 0 };
   });
 
   // Persist wallets
@@ -156,21 +162,21 @@ const App: React.FC = () => {
     const todayStr = getBeijingDate();
     const storageKey = `xone_daily_start`;
     const storedData = localStorage.getItem(storageKey);
-    
+
     let baselineData;
 
     if (storedData) {
       const parsed = JSON.parse(storedData);
       // If the stored data is from a previous day (Beijing Time), we reset the baseline to NOW.
       if (parsed.date !== todayStr) {
-         baselineData = {
-           date: todayStr,
-           usdt: currentStats.balanceUsdt,
-           usdx: currentStats.balanceUsdx
-         };
-         localStorage.setItem(storageKey, JSON.stringify(baselineData));
-         setUsdtChange(0);
-         setUsdxChange(0);
+        baselineData = {
+          date: todayStr,
+          usdt: currentStats.balanceUsdt,
+          usdx: currentStats.balanceUsdx
+        };
+        localStorage.setItem(storageKey, JSON.stringify(baselineData));
+        setUsdtChange(0);
+        setUsdxChange(0);
       } else {
         // It's the same day, use the stored open price
         baselineData = parsed;
@@ -194,15 +200,15 @@ const App: React.FC = () => {
   const fetchData = useCallback(async () => {
     // Only set loading true if we don't have data yet (first load)
     if (stats.currentBalance === 0) {
-        setIsLoadingChain(true);
+      setIsLoadingChain(true);
     }
-    
+
     try {
       // 1. Fast Path: Fetch Basic Stats (No Volume) & VIP Data
       // This ensures the UI becomes interactive quickly
       const basicChainData = await fetchRealChainData(monitoredWallets, false);
       const vaultChainData = await fetchRealChainData(multiSigVaults, false);
-      
+
       // Update state immediately with basic data
       setStats(prev => ({
         ...prev,
@@ -210,23 +216,35 @@ const App: React.FC = () => {
       }));
       setVipData(basicChainData.vipData);
       setVaultData(vaultChainData.vipData);
-      
+
       // Clear loading state NOW so user sees data
       setIsLoadingChain(false);
 
       // 2. Slow Path: Fetch Volume & Logs in background
       // We don't await this to block the UI, but we update state when it finishes
       fetchRealChainData(monitoredWallets, true).then((fullChainData) => {
-         setStats(prev => ({
-            ...prev,
-            volume24h: fullChainData.stats.volume24h || prev.volume24h,
-            fees24h: fullChainData.stats.fees24h || prev.fees24h,
-         }));
+        setStats(prev => ({
+          ...prev,
+          volume24h: fullChainData.stats.volume24h || prev.volume24h,
+          fees24h: fullChainData.stats.fees24h || prev.fees24h,
+        }));
       }).catch(e => console.warn("Background volume fetch failed", e));
 
-      // 3. Other async data
-      fetchLargeTransactions().then(setLargeTransactions).catch(e => console.warn("Large tx fetch failed", e));
-      fetchDailySwapStats().then(setDailySwapStats).catch(e => console.warn("Daily swap fetch failed", e));
+      // 3. Other async data — preserve previous values on error/zero
+      fetchLargeTransactions().then(txs => {
+        if (txs.length > 0) setLargeTransactions(txs);
+      }).catch(e => console.warn("Large tx fetch failed", e));
+
+      fetchDailySwapStats().then(newStats => {
+        // Only overwrite if we actually got data; don't zero-out a previously good value
+        setDailySwapStats(prev => ({
+          todayUsdtToUsdx: newStats.todayUsdtToUsdx > 0 ? newStats.todayUsdtToUsdx : prev.todayUsdtToUsdx,
+          todayUsdxToUsdt: newStats.todayUsdxToUsdt > 0 ? newStats.todayUsdxToUsdt : prev.todayUsdxToUsdt,
+          yesterdayUsdtToUsdx: newStats.yesterdayUsdtToUsdx > 0 ? newStats.yesterdayUsdtToUsdx : prev.yesterdayUsdtToUsdx,
+          yesterdayUsdxToUsdt: newStats.yesterdayUsdxToUsdt > 0 ? newStats.yesterdayUsdxToUsdt : prev.yesterdayUsdxToUsdt,
+          lastUpdatedBlock: newStats.lastUpdatedBlock,
+        }));
+      }).catch(e => console.warn("Daily swap fetch failed", e));
 
       // Process daily flow changes (using basic stats is fine for this)
       processDailyFlow(basicChainData.stats);
@@ -240,7 +258,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 15000); 
+    // Increase interval to 60 seconds to avoid RPC rate limits
+    const interval = setInterval(fetchData, 60000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -253,10 +272,10 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-xone-900 text-gray-200 flex font-sans overflow-hidden relative">
-      
+
       {/* Mobile Overlay */}
       {isMobileMenuOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/50 z-20 lg:hidden backdrop-blur-sm"
           onClick={() => setIsMobileMenuOpen(false)}
         />
@@ -280,15 +299,15 @@ const App: React.FC = () => {
         </div>
 
         <nav className="flex-1 py-6 flex flex-col gap-1 px-3">
-          <button 
+          <button
             onClick={() => setActiveTab('dashboard')}
             className={`flex items-center p-3 rounded-lg transition-all ${activeTab === 'dashboard' ? 'bg-xone-800 text-white border-l-4 border-xone-accent' : 'text-gray-500 hover:bg-xone-800 hover:text-gray-300'}`}
           >
             <LayoutDashboard size={20} />
             <span className="ml-3 font-medium text-sm tracking-wide">{t('dashboard')}</span>
           </button>
-          
-          <button 
+
+          <button
             onClick={() => setActiveTab('keyAccounts')}
             className={`flex items-center p-3 rounded-lg transition-all ${activeTab === 'keyAccounts' ? 'bg-xone-800 text-white border-l-4 border-xone-accent' : 'text-gray-500 hover:bg-xone-800 hover:text-gray-300'}`}
           >
@@ -296,7 +315,7 @@ const App: React.FC = () => {
             <span className="ml-3 font-medium text-sm tracking-wide">{t('keyAccounts')}</span>
           </button>
 
-          <button 
+          <button
             onClick={() => setActiveTab('multiSigVault')}
             className={`flex items-center p-3 rounded-lg transition-all ${activeTab === 'multiSigVault' ? 'bg-xone-800 text-white border-l-4 border-xone-accent' : 'text-gray-500 hover:bg-xone-800 hover:text-gray-300'}`}
           >
@@ -304,7 +323,7 @@ const App: React.FC = () => {
             <span className="ml-3 font-medium text-sm tracking-wide">{t('multiSigVault')}</span>
           </button>
 
-          <button 
+          <button
             onClick={() => setActiveTab('largeTransactions')}
             className={`flex items-center p-3 rounded-lg transition-all ${activeTab === 'largeTransactions' ? 'bg-xone-800 text-white border-l-4 border-xone-accent' : 'text-gray-500 hover:bg-xone-800 hover:text-gray-300'}`}
           >
@@ -326,73 +345,73 @@ const App: React.FC = () => {
 
       {/* Bottom Navigation (Visible on Mobile) */}
       <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-xone-900 border-t border-xone-800 z-50 flex justify-around items-center pb-safe pt-2 px-2 h-16">
-          <button 
-            onClick={() => setActiveTab('dashboard')}
-            className={`flex flex-col items-center justify-center w-full h-full gap-1 ${activeTab === 'dashboard' ? 'text-xone-accent' : 'text-gray-500'}`}
-          >
-            <LayoutDashboard size={20} />
-            <span className="text-[10px] font-medium">{t('dashboard')}</span>
-          </button>
-          
-          <button 
-            onClick={() => setActiveTab('keyAccounts')}
-            className={`flex flex-col items-center justify-center w-full h-full gap-1 ${activeTab === 'keyAccounts' ? 'text-xone-accent' : 'text-gray-500'}`}
-          >
-            <ShieldCheck size={20} />
-            <span className="text-[10px] font-medium">{t('keyAccounts')}</span>
-          </button>
+        <button
+          onClick={() => setActiveTab('dashboard')}
+          className={`flex flex-col items-center justify-center w-full h-full gap-1 ${activeTab === 'dashboard' ? 'text-xone-accent' : 'text-gray-500'}`}
+        >
+          <LayoutDashboard size={20} />
+          <span className="text-[10px] font-medium">{t('dashboard')}</span>
+        </button>
 
-          <button 
-            onClick={() => setActiveTab('multiSigVault')}
-            className={`flex flex-col items-center justify-center w-full h-full gap-1 ${activeTab === 'multiSigVault' ? 'text-xone-accent' : 'text-gray-500'}`}
-          >
-            <Vault size={20} />
-            <span className="text-[10px] font-medium">{t('multiSigVault')}</span>
-          </button>
+        <button
+          onClick={() => setActiveTab('keyAccounts')}
+          className={`flex flex-col items-center justify-center w-full h-full gap-1 ${activeTab === 'keyAccounts' ? 'text-xone-accent' : 'text-gray-500'}`}
+        >
+          <ShieldCheck size={20} />
+          <span className="text-[10px] font-medium">{t('keyAccounts')}</span>
+        </button>
 
-          <button 
-            onClick={() => setActiveTab('largeTransactions')}
-            className={`flex flex-col items-center justify-center w-full h-full gap-1 ${activeTab === 'largeTransactions' ? 'text-xone-accent' : 'text-gray-500'}`}
-          >
-            <Activity size={20} />
-            <span className="text-[10px] font-medium">{t('settings')}</span>
-          </button>
+        <button
+          onClick={() => setActiveTab('multiSigVault')}
+          className={`flex flex-col items-center justify-center w-full h-full gap-1 ${activeTab === 'multiSigVault' ? 'text-xone-accent' : 'text-gray-500'}`}
+        >
+          <Vault size={20} />
+          <span className="text-[10px] font-medium">{t('multiSigVault')}</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('largeTransactions')}
+          className={`flex flex-col items-center justify-center w-full h-full gap-1 ${activeTab === 'largeTransactions' ? 'text-xone-accent' : 'text-gray-500'}`}
+        >
+          <Activity size={20} />
+          <span className="text-[10px] font-medium">{t('settings')}</span>
+        </button>
       </div>
 
       {/* Main Content Area */}
       <main className="flex-1 w-full p-4 lg:p-6 overflow-y-auto bg-[#0b1121] h-screen pb-20 lg:pb-6">
-        
+
         {/* Header Bar */}
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 sticky top-0 z-10 bg-[#0b1121]/95 backdrop-blur-sm py-2 -mx-4 px-4 lg:mx-0 lg:px-0">
           <div className="flex items-center gap-3">
-             <div className="flex flex-col">
-                <h1 className="text-lg md:text-xl font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                   {activeTab === 'dashboard' && t('dashboard')}
-                   {activeTab === 'keyAccounts' && t('keyAccounts')}
-                   {activeTab === 'multiSigVault' && t('multiSigVault')}
-                   {activeTab === 'largeTransactions' && t('settings')}
-                </h1>
-                <div className="flex items-center gap-1 text-[10px] text-gray-500 font-mono">
-                  <span className="hidden sm:inline">MASTER:</span>
-                  <span className="text-gray-400 flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => handleCopyAddress(TARGET_CONTRACT_ADDRESS)}>
-                    {TARGET_CONTRACT_ADDRESS.substring(0, 4)}...{TARGET_CONTRACT_ADDRESS.substring(38)}
-                    <Copy size={8} />
-                  </span>
-                  <span className="mx-1">|</span>
-                  <span>{lastUpdated.toLocaleTimeString()}</span>
-                </div>
-             </div>
+            <div className="flex flex-col">
+              <h1 className="text-lg md:text-xl font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                {activeTab === 'dashboard' && t('dashboard')}
+                {activeTab === 'keyAccounts' && t('keyAccounts')}
+                {activeTab === 'multiSigVault' && t('multiSigVault')}
+                {activeTab === 'largeTransactions' && t('settings')}
+              </h1>
+              <div className="flex items-center gap-1 text-[10px] text-gray-500 font-mono">
+                <span className="hidden sm:inline">MASTER:</span>
+                <span className="text-gray-400 flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => handleCopyAddress(TARGET_CONTRACT_ADDRESS)}>
+                  {TARGET_CONTRACT_ADDRESS.substring(0, 4)}...{TARGET_CONTRACT_ADDRESS.substring(38)}
+                  <Copy size={8} />
+                </span>
+                <span className="mx-1">|</span>
+                <span>{lastUpdated.toLocaleTimeString()}</span>
+              </div>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 self-end md:self-auto">
-            <button 
+            <button
               onClick={toggleLanguage}
               className="flex items-center gap-2 px-3 py-1.5 bg-xone-800 border border-xone-700 rounded text-xs text-gray-300 hover:text-white hover:border-gray-500 transition-all font-medium"
             >
               <Globe size={14} />
               {lang === 'en' ? 'EN' : 'CN'}
             </button>
-             <button 
+            <button
               onClick={() => fetchData()}
               className="p-1.5 bg-xone-800 border border-xone-700 rounded text-gray-400 hover:text-xone-accent hover:border-xone-accent transition-all active:scale-95"
             >
@@ -405,238 +424,238 @@ const App: React.FC = () => {
           <>
             {/* Top Row: Asset Holdings (Compact) */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-               <StatCard 
-                  label={t('totalBalance')}
-                  value={`$${stats.balanceUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-                  icon={<Wallet size={18} />}
-                />
-                
-                {/* USDT Card - Fund Inflow Monitor */}
-                <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 md:p-6 relative overflow-hidden group hover:border-green-500/50 transition-colors duration-300">
-                   <div className="flex justify-between items-start mb-2">
-                      <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">USDT 储备 (24h)</p>
-                      <DollarSign size={16} className="text-green-400" />
-                   </div>
-                   <h3 className="text-xl md:text-2xl font-bold text-white font-mono">{stats.balanceUsdt.toLocaleString(undefined, { maximumFractionDigits: 0 })}</h3>
-                   <div className={`flex items-center mt-2 text-xs md:text-sm font-bold ${usdtChange >= 0 ? 'text-xone-success' : 'text-xone-danger'}`}>
-                      {usdtChange >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-                      <span className="ml-1">{usdtChange > 0 ? '+' : ''}{usdtChange.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                      <span className="ml-2 text-[10px] text-gray-500 font-normal border border-gray-700 rounded px-1">业绩{usdtChange >= 0 ? '增长' : '流出'}</span>
-                   </div>
-                </div>
+              <StatCard
+                label={t('totalBalance')}
+                value={`$${stats.balanceUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                icon={<Wallet size={18} />}
+              />
 
-                {/* USDX Card - Fund Outflow Monitor */}
-                <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 md:p-6 relative overflow-hidden group hover:border-cyan-500/50 transition-colors duration-300">
-                   <div className="flex justify-between items-start mb-2">
-                      <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">USDX 总量 (24h)</p>
-                      <Coins size={16} className="text-cyan-400" />
-                   </div>
-                   <h3 className="text-xl md:text-2xl font-bold text-white font-mono">{stats.balanceUsdx.toLocaleString(undefined, { maximumFractionDigits: 0 })}</h3>
-                    <div className={`flex items-center mt-2 text-xs md:text-sm font-bold text-gray-300`}>
-                      {usdxChange >= 0 ? <ArrowUpRight size={14} className="text-gray-400" /> : <ArrowDownRight size={14} className="text-gray-400" />}
-                      <span className="ml-1">{usdxChange > 0 ? '+' : ''}{usdxChange.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                   </div>
+              {/* USDT Card - Fund Inflow Monitor */}
+              <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 md:p-6 relative overflow-hidden group hover:border-green-500/50 transition-colors duration-300">
+                <div className="flex justify-between items-start mb-2">
+                  <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">USDT 储备 (24h)</p>
+                  <DollarSign size={16} className="text-green-400" />
                 </div>
+                <h3 className="text-xl md:text-2xl font-bold text-white font-mono">{stats.balanceUsdt.toLocaleString(undefined, { maximumFractionDigits: 0 })}</h3>
+                <div className={`flex items-center mt-2 text-xs md:text-sm font-bold ${usdtChange >= 0 ? 'text-xone-success' : 'text-xone-danger'}`}>
+                  {usdtChange >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                  <span className="ml-1">{usdtChange > 0 ? '+' : ''}{usdtChange.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                  <span className="ml-2 text-[10px] text-gray-500 font-normal border border-gray-700 rounded px-1">业绩{usdtChange >= 0 ? '增长' : '流出'}</span>
+                </div>
+              </div>
 
-                <StatCard 
-                  label={t('remainingBox')}
-                  value={stats.balanceBox.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  subValue="BOX"
-                  icon={<Coins size={18} className="text-indigo-400" />}
-                />
+              {/* USDX Card - Fund Outflow Monitor */}
+              <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 md:p-6 relative overflow-hidden group hover:border-cyan-500/50 transition-colors duration-300">
+                <div className="flex justify-between items-start mb-2">
+                  <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">USDX 总量 (24h)</p>
+                  <Coins size={16} className="text-cyan-400" />
+                </div>
+                <h3 className="text-xl md:text-2xl font-bold text-white font-mono">{stats.balanceUsdx.toLocaleString(undefined, { maximumFractionDigits: 0 })}</h3>
+                <div className={`flex items-center mt-2 text-xs md:text-sm font-bold text-gray-300`}>
+                  {usdxChange >= 0 ? <ArrowUpRight size={14} className="text-gray-400" /> : <ArrowDownRight size={14} className="text-gray-400" />}
+                  <span className="ml-1">{usdxChange > 0 ? '+' : ''}{usdxChange.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                </div>
+              </div>
+
+              <StatCard
+                label={t('remainingBox')}
+                value={stats.balanceBox.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                subValue="BOX"
+                icon={<Coins size={18} className="text-indigo-400" />}
+              />
             </div>
 
             {/* Daily Swap Monitor */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                {/* USDT -> USDX */}
-                <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 relative overflow-hidden">
-                    <div className="absolute right-0 top-0 bottom-0 w-1 bg-green-500/50"></div>
-                    <div className="flex items-center justify-between mb-3">
-                        <p className="text-gray-400 text-xs uppercase tracking-wider">{t('todayUsdtToUsdx')}</p>
-                        <div className="h-8 w-8 rounded-full bg-green-500/10 flex items-center justify-center border border-green-500/30">
-                            <ArrowDownRight size={16} className="text-green-400" />
-                        </div>
-                    </div>
-                    <div className="flex justify-between items-end">
-                        <div>
-                            <p className="text-xs text-gray-500 mb-1">{t('today')}</p>
-                            <h3 className="text-xl font-bold text-white font-mono">{dailySwapStats.todayUsdtToUsdx.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-xs text-gray-500">USDT</span></h3>
-                        </div>
-                        <div className="text-right">
-                            <p className="text-xs text-gray-500 mb-1">{t('yesterday')}</p>
-                            <h3 className="text-lg font-bold text-gray-400 font-mono">{dailySwapStats.yesterdayUsdtToUsdx.toLocaleString(undefined, { maximumFractionDigits: 2 })}</h3>
-                        </div>
-                    </div>
+              {/* USDT -> USDX */}
+              <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 relative overflow-hidden">
+                <div className="absolute right-0 top-0 bottom-0 w-1 bg-green-500/50"></div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-gray-400 text-xs uppercase tracking-wider">{t('todayUsdtToUsdx')}</p>
+                  <div className="h-8 w-8 rounded-full bg-green-500/10 flex items-center justify-center border border-green-500/30">
+                    <ArrowDownRight size={16} className="text-green-400" />
+                  </div>
                 </div>
+                <div className="flex justify-between items-end">
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">{t('today')}</p>
+                    <h3 className="text-xl font-bold text-white font-mono">{dailySwapStats.todayUsdtToUsdx.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-xs text-gray-500">USDT</span></h3>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-500 mb-1">{t('yesterday')}</p>
+                    <h3 className="text-lg font-bold text-gray-400 font-mono">{dailySwapStats.yesterdayUsdtToUsdx.toLocaleString(undefined, { maximumFractionDigits: 2 })}</h3>
+                  </div>
+                </div>
+              </div>
 
-                {/* USDX -> USDT */}
-                <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 relative overflow-hidden">
-                    <div className="absolute right-0 top-0 bottom-0 w-1 bg-cyan-500/50"></div>
-                    <div className="flex items-center justify-between mb-3">
-                        <p className="text-gray-400 text-xs uppercase tracking-wider">{t('todayUsdxToUsdt')}</p>
-                        <div className="h-8 w-8 rounded-full bg-cyan-500/10 flex items-center justify-center border border-cyan-500/30">
-                            <ArrowUpRight size={16} className="text-cyan-400" />
-                        </div>
-                    </div>
-                    <div className="flex justify-between items-end">
-                        <div>
-                            <p className="text-xs text-gray-500 mb-1">{t('today')}</p>
-                            <h3 className="text-xl font-bold text-white font-mono">{dailySwapStats.todayUsdxToUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-xs text-gray-500">USDX</span></h3>
-                        </div>
-                        <div className="text-right">
-                            <p className="text-xs text-gray-500 mb-1">{t('yesterday')}</p>
-                            <h3 className="text-lg font-bold text-gray-400 font-mono">{dailySwapStats.yesterdayUsdxToUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })}</h3>
-                        </div>
-                    </div>
+              {/* USDX -> USDT */}
+              <div className="bg-xone-800 border border-xone-700 rounded-xl p-4 relative overflow-hidden">
+                <div className="absolute right-0 top-0 bottom-0 w-1 bg-cyan-500/50"></div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-gray-400 text-xs uppercase tracking-wider">{t('todayUsdxToUsdt')}</p>
+                  <div className="h-8 w-8 rounded-full bg-cyan-500/10 flex items-center justify-center border border-cyan-500/30">
+                    <ArrowUpRight size={16} className="text-cyan-400" />
+                  </div>
                 </div>
+                <div className="flex justify-between items-end">
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">{t('today')}</p>
+                    <h3 className="text-xl font-bold text-white font-mono">{dailySwapStats.todayUsdxToUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-xs text-gray-500">USDX</span></h3>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-500 mb-1">{t('yesterday')}</p>
+                    <h3 className="text-lg font-bold text-gray-400 font-mono">{dailySwapStats.yesterdayUsdxToUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })}</h3>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Middle Row: LP Monitors (Split Layout) */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-6 mb-6">
-              
+
               {/* Card 1: BOX/USDX (Trading Pair) */}
               <div className="bg-xone-800 border border-xone-700 rounded-xl overflow-hidden flex flex-col shadow-lg relative group">
-                 <div className="p-4 border-b border-xone-700 flex justify-between items-center bg-gradient-to-r from-xone-800 to-indigo-900/20">
-                    <div className="flex items-center gap-2">
-                      <TrendingUp className="text-indigo-400" size={18} />
-                      <h3 className="font-bold text-white tracking-wide text-sm md:text-base">{t('traderPair')}</h3>
+                <div className="p-4 border-b border-xone-700 flex justify-between items-center bg-gradient-to-r from-xone-800 to-indigo-900/20">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="text-indigo-400" size={18} />
+                    <h3 className="font-bold text-white tracking-wide text-sm md:text-base">{t('traderPair')}</h3>
+                  </div>
+                  <div className="flex gap-2 text-xs">
+                    <span className="flex items-center gap-1 bg-black/20 text-gray-400 px-2 py-1 rounded border border-gray-700 cursor-pointer hover:text-white" onClick={() => handleCopyAddress(BOX_LP_ADDRESS)}>
+                      <LinkIcon size={10} /> <span className="hidden sm:inline">{t('contractAddress')}</span><span className="sm:hidden">LP</span>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-4 md:p-6 flex flex-col gap-4 md:gap-6">
+                  <div className="flex justify-between items-end">
+                    <span className="text-gray-400 text-xs md:text-sm font-mono uppercase">{t('price')}</span>
+                    <div className="text-right">
+                      <span className="text-2xl md:text-3xl font-bold text-white font-mono tracking-tight">
+                        {stats.boxPrice > 0 ? stats.boxPrice.toFixed(4) : "0.0000"}
+                      </span>
+                      <span className="text-[10px] md:text-xs text-gray-500 font-normal ml-2">USDX/BOX</span>
                     </div>
-                    <div className="flex gap-2 text-xs">
-                       <span className="flex items-center gap-1 bg-black/20 text-gray-400 px-2 py-1 rounded border border-gray-700 cursor-pointer hover:text-white" onClick={() => handleCopyAddress(BOX_LP_ADDRESS)}>
-                          <LinkIcon size={10} /> <span className="hidden sm:inline">{t('contractAddress')}</span><span className="sm:hidden">LP</span>
-                       </span>
+                  </div>
+
+                  {/* Chart Area */}
+                  <div className="h-24 md:h-32 w-full bg-black/20 rounded-lg overflow-hidden border border-xone-700/50">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData}>
+                        <defs>
+                          <linearGradient id="colorBox" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#818cf8" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#818cf8" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <Area type="monotone" dataKey="value" stroke="#818cf8" strokeWidth={2} fillOpacity={1} fill="url(#colorBox)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Reserves & Stats */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex justify-between items-center bg-xone-900/40 p-2 rounded">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
+                        <span className="text-gray-400 text-xs">BOX</span>
+                      </div>
+                      <span className="font-mono text-indigo-300 text-sm">{stats.lpBalanceBox.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                     </div>
-                 </div>
-                 
-                 <div className="p-4 md:p-6 flex flex-col gap-4 md:gap-6">
-                    <div className="flex justify-between items-end">
-                      <span className="text-gray-400 text-xs md:text-sm font-mono uppercase">{t('price')}</span>
-                      <div className="text-right">
-                         <span className="text-2xl md:text-3xl font-bold text-white font-mono tracking-tight">
-                            {stats.boxPrice > 0 ? stats.boxPrice.toFixed(4) : "0.0000"} 
-                         </span>
-                         <span className="text-[10px] md:text-xs text-gray-500 font-normal ml-2">USDX/BOX</span>
+
+                    <div className="flex justify-between items-center bg-xone-900/40 p-2 rounded">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-cyan-500"></div>
+                        <span className="text-gray-400 text-xs">USDX</span>
+                      </div>
+                      <span className="font-mono text-cyan-300 text-sm">{stats.lpBalanceUsdx.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                    </div>
+
+                    <div className="col-span-2 flex justify-between gap-2">
+                      <div className="flex-1 bg-black/20 p-2 rounded border border-gray-800">
+                        <p className="text-[10px] text-gray-500 uppercase">{t('volume24h')}</p>
+                        <p className="font-mono text-white text-sm">{stats.volume24h.toLocaleString()}</p>
+                      </div>
+                      <div className="flex-1 bg-indigo-900/20 p-2 rounded border border-indigo-500/30">
+                        <p className="text-[10px] text-indigo-300 uppercase">{t('estFees')}</p>
+                        <p className="font-mono text-indigo-100 text-sm">${stats.fees24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
                       </div>
                     </div>
-
-                    {/* Chart Area */}
-                    <div className="h-24 md:h-32 w-full bg-black/20 rounded-lg overflow-hidden border border-xone-700/50">
-                        <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={chartData}>
-                          <defs>
-                            <linearGradient id="colorBox" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#818cf8" stopOpacity={0.3}/>
-                              <stop offset="95%" stopColor="#818cf8" stopOpacity={0}/>
-                            </linearGradient>
-                          </defs>
-                          <Area type="monotone" dataKey="value" stroke="#818cf8" strokeWidth={2} fillOpacity={1} fill="url(#colorBox)" />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-
-                    {/* Reserves & Stats */}
-                    <div className="grid grid-cols-2 gap-3">
-                        <div className="flex justify-between items-center bg-xone-900/40 p-2 rounded">
-                          <div className="flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
-                            <span className="text-gray-400 text-xs">BOX</span>
-                          </div>
-                          <span className="font-mono text-indigo-300 text-sm">{stats.lpBalanceBox.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                        </div>
-
-                        <div className="flex justify-between items-center bg-xone-900/40 p-2 rounded">
-                          <div className="flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-cyan-500"></div>
-                            <span className="text-gray-400 text-xs">USDX</span>
-                          </div>
-                          <span className="font-mono text-cyan-300 text-sm">{stats.lpBalanceUsdx.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                        </div>
-
-                        <div className="col-span-2 flex justify-between gap-2">
-                           <div className="flex-1 bg-black/20 p-2 rounded border border-gray-800">
-                              <p className="text-[10px] text-gray-500 uppercase">{t('volume24h')}</p>
-                              <p className="font-mono text-white text-sm">{stats.volume24h.toLocaleString()}</p>
-                           </div>
-                           <div className="flex-1 bg-indigo-900/20 p-2 rounded border border-indigo-500/30">
-                              <p className="text-[10px] text-indigo-300 uppercase">{t('estFees')}</p>
-                              <p className="font-mono text-indigo-100 text-sm">${stats.fees24h.toLocaleString(undefined, {maximumFractionDigits: 2})}</p>
-                           </div>
-                        </div>
-                    </div>
-                 </div>
+                  </div>
+                </div>
               </div>
 
               {/* Card 2: USDX/USDT (Stable Pair) */}
               <div className="bg-xone-800 border border-xone-700 rounded-xl overflow-hidden flex flex-col shadow-lg">
-                 <div className="p-4 border-b border-xone-700 flex justify-between items-center bg-gradient-to-r from-xone-800 to-teal-900/20">
-                    <div className="flex items-center gap-2">
-                      <Activity className="text-teal-400" size={18} />
-                      <h3 className="font-bold text-white tracking-wide text-sm md:text-base">{t('stablePair')}</h3>
+                <div className="p-4 border-b border-xone-700 flex justify-between items-center bg-gradient-to-r from-xone-800 to-teal-900/20">
+                  <div className="flex items-center gap-2">
+                    <Activity className="text-teal-400" size={18} />
+                    <h3 className="font-bold text-white tracking-wide text-sm md:text-base">{t('stablePair')}</h3>
+                  </div>
+                  <div className="flex gap-2 text-xs">
+                    <span className="flex items-center gap-1 bg-black/20 text-gray-400 px-2 py-1 rounded border border-gray-700 cursor-pointer hover:text-white" onClick={() => handleCopyAddress(USDX_USDT_LP_ADDRESS)}>
+                      <LinkIcon size={10} /> <span className="hidden sm:inline">{t('contractAddress')}</span><span className="sm:hidden">LP</span>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-4 md:p-6 flex flex-col gap-4 md:gap-6">
+                  <div className="flex justify-between items-end">
+                    <span className="text-gray-400 text-xs md:text-sm font-mono uppercase">{t('pegRate')}</span>
+                    <div className="text-right">
+                      <span className={`text-2xl md:text-3xl font-bold font-mono tracking-tight ${Math.abs(stats.stablePeg - 1) < 0.01 ? 'text-green-400' : 'text-amber-400'}`}>
+                        {stats.stablePeg.toFixed(4)}
+                      </span>
+                      <span className="text-[10px] md:text-xs text-gray-500 font-normal ml-2">USDT/USDX</span>
                     </div>
-                    <div className="flex gap-2 text-xs">
-                       <span className="flex items-center gap-1 bg-black/20 text-gray-400 px-2 py-1 rounded border border-gray-700 cursor-pointer hover:text-white" onClick={() => handleCopyAddress(USDX_USDT_LP_ADDRESS)}>
-                          <LinkIcon size={10} /> <span className="hidden sm:inline">{t('contractAddress')}</span><span className="sm:hidden">LP</span>
-                       </span>
+                  </div>
+
+                  {/* Peg Visualization */}
+                  <div className="h-24 md:h-32 w-full bg-black/20 rounded-lg border border-xone-700/50 flex flex-col items-center justify-center relative p-4">
+                    <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden relative">
+                      {/* Center Marker */}
+                      <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-10 opacity-50"></div>
+                      {/* Bar */}
+                      <div
+                        className={`absolute top-0 bottom-0 transition-all duration-500 ${stats.stablePeg >= 1 ? 'left-1/2 bg-green-500' : 'right-1/2 bg-amber-500'}`}
+                        style={{ width: `${Math.min(Math.abs(stats.stablePeg - 1) * 500, 50)}%` }} // Exaggerate scale for visibility
+                      ></div>
                     </div>
-                 </div>
-                 
-                 <div className="p-4 md:p-6 flex flex-col gap-4 md:gap-6">
-                    <div className="flex justify-between items-end">
-                      <span className="text-gray-400 text-xs md:text-sm font-mono uppercase">{t('pegRate')}</span>
-                      <div className="text-right">
-                         <span className={`text-2xl md:text-3xl font-bold font-mono tracking-tight ${Math.abs(stats.stablePeg - 1) < 0.01 ? 'text-green-400' : 'text-amber-400'}`}>
-                            {stats.stablePeg.toFixed(4)}
-                         </span>
-                         <span className="text-[10px] md:text-xs text-gray-500 font-normal ml-2">USDT/USDX</span>
+                    <div className="flex justify-between w-full mt-2 text-[10px] text-gray-500 font-mono">
+                      <span>0.98</span>
+                      <span>1.00</span>
+                      <span>1.02</span>
+                    </div>
+                    <div className="mt-4 flex items-center gap-2 text-xs text-gray-400">
+                      <ArrowRightLeft size={14} />
+                      <span>Pool Ratio: {(stats.lp2BalanceUsdx / (stats.lp2BalanceUsdx + stats.lp2BalanceUsdt || 1) * 100).toFixed(1)}% USDX</span>
+                    </div>
+                  </div>
+
+                  {/* Reserves & Stats */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex justify-between items-center bg-xone-900/40 p-2 rounded">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-cyan-500"></div>
+                        <span className="text-gray-400 text-xs">USDX</span>
                       </div>
+                      <span className="font-mono text-cyan-300 text-sm">{stats.lp2BalanceUsdx.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                     </div>
 
-                    {/* Peg Visualization */}
-                    <div className="h-24 md:h-32 w-full bg-black/20 rounded-lg border border-xone-700/50 flex flex-col items-center justify-center relative p-4">
-                        <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden relative">
-                           {/* Center Marker */}
-                           <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-10 opacity-50"></div>
-                           {/* Bar */}
-                           <div 
-                              className={`absolute top-0 bottom-0 transition-all duration-500 ${stats.stablePeg >= 1 ? 'left-1/2 bg-green-500' : 'right-1/2 bg-amber-500'}`}
-                              style={{ width: `${Math.min(Math.abs(stats.stablePeg - 1) * 500, 50)}%` }} // Exaggerate scale for visibility
-                           ></div>
-                        </div>
-                        <div className="flex justify-between w-full mt-2 text-[10px] text-gray-500 font-mono">
-                           <span>0.98</span>
-                           <span>1.00</span>
-                           <span>1.02</span>
-                        </div>
-                        <div className="mt-4 flex items-center gap-2 text-xs text-gray-400">
-                            <ArrowRightLeft size={14} />
-                            <span>Pool Ratio: {(stats.lp2BalanceUsdx / (stats.lp2BalanceUsdx + stats.lp2BalanceUsdt || 1) * 100).toFixed(1)}% USDX</span>
-                        </div>
+                    <div className="flex justify-between items-center bg-xone-900/40 p-2 rounded">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                        <span className="text-gray-400 text-xs">USDT</span>
+                      </div>
+                      <span className="font-mono text-green-300 text-sm">{stats.lp2BalanceUsdt.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                     </div>
 
-                    {/* Reserves & Stats */}
-                    <div className="grid grid-cols-2 gap-3">
-                        <div className="flex justify-between items-center bg-xone-900/40 p-2 rounded">
-                          <div className="flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-cyan-500"></div>
-                            <span className="text-gray-400 text-xs">USDX</span>
-                          </div>
-                          <span className="font-mono text-cyan-300 text-sm">{stats.lp2BalanceUsdx.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                        </div>
-
-                        <div className="flex justify-between items-center bg-xone-900/40 p-2 rounded">
-                          <div className="flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-                            <span className="text-gray-400 text-xs">USDT</span>
-                          </div>
-                          <span className="font-mono text-green-300 text-sm">{stats.lp2BalanceUsdt.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                        </div>
-
-                        <div className="col-span-2 bg-black/20 p-2 rounded border border-gray-800">
-                            <p className="text-[10px] text-gray-500 uppercase">{t('poolLiquidity')}</p>
-                            <p className="font-mono text-white text-sm">${(stats.lp2BalanceUsdx + stats.lp2BalanceUsdt).toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
-                         </div>
+                    <div className="col-span-2 bg-black/20 p-2 rounded border border-gray-800">
+                      <p className="text-[10px] text-gray-500 uppercase">{t('poolLiquidity')}</p>
+                      <p className="font-mono text-white text-sm">${(stats.lp2BalanceUsdx + stats.lp2BalanceUsdt).toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                     </div>
-                 </div>
+                  </div>
+                </div>
               </div>
 
             </div>
@@ -645,7 +664,7 @@ const App: React.FC = () => {
 
         {activeTab === 'keyAccounts' && (
           <div className="pb-6">
-             <KeyAccountsPanel 
+            <KeyAccountsPanel
               portfolios={vipData.portfolios}
               onAddWallet={handleAddWallet}
               onRemoveWallet={handleRemoveWallet}
@@ -656,7 +675,7 @@ const App: React.FC = () => {
 
         {activeTab === 'multiSigVault' && (
           <div className="pb-6">
-             <MultiSigVaultPanel 
+            <MultiSigVaultPanel
               portfolios={vaultData.portfolios}
               onAddWallet={handleAddVault}
               onRemoveWallet={handleRemoveVault}
@@ -667,7 +686,7 @@ const App: React.FC = () => {
 
         {activeTab === 'largeTransactions' && (
           <div className="pb-6 h-full">
-             <LargeTransactionsPanel transactions={largeTransactions} fullHeight={true} />
+            <LargeTransactionsPanel transactions={largeTransactions} fullHeight={true} />
           </div>
         )}
 
