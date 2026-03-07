@@ -2,11 +2,13 @@ import { ContractStats } from './types';
 
 // XONE Chain Configuration
 export const RPC_URL = "https://rpc.xone.org";
-// Fallback RPC endpoints for resilience
+// Fallback RPC endpoints for resilience (XONE official nodes)
 export const RPC_URLS = [
   "https://rpc.xone.org",
-  "https://rpc.xone.plus",
-  "https://xone-rpc.publicnode.com",
+  "https://rpc-node-1.xone.org",
+  "https://rpc-node-2.xone.org",
+  "https://rpc-node-3.xone.org",
+  "https://rpc-node-4.xone.org",
 ];
 export const CHAIN_ID = 1;
 export const EXPLORER_URL = "https://www.xonescan.com";

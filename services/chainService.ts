@@ -311,17 +311,16 @@ const estimateBlockByTimestamp = async (provider: JsonRpcProvider, targetTimesta
 // ============================================================
 const fetchTokenBalance = async (tokenAddress: string, walletAddress: string): Promise<number> => {
   try {
-    const provider = getProvider();
-    const contract = new Contract(tokenAddress, ERC20_ABI, provider);
-    const wei = await retryOperation(p => new Contract(tokenAddress, ERC20_ABI, p).balanceOf(walletAddress));
     let decimals = tokenAddress === USDT_ADDRESS ? 6 : 18;
+    const wei = await retryOperation(p => new Contract(tokenAddress, ERC20_ABI, p).balanceOf(walletAddress));
     try { decimals = await retryOperation(p => new Contract(tokenAddress, ERC20_ABI, p).decimals()); } catch { }
     return parseFloat(formatUnits(wei, decimals));
-  } catch (e) {
+  } catch {
     console.warn(`Balance fetch failed for ${tokenAddress} @ ${walletAddress}`);
     return 0;
   }
 };
+
 
 // ============================================================
 // fetchRealChainData
@@ -331,6 +330,33 @@ export const fetchRealChainData = async (
   fetchVolume: boolean = true
 ): Promise<{ stats: Partial<ContractStats>, vipData: VipAccountsData }> => {
   const emptyResult = { stats: {}, vipData: { portfolios: [] } };
+
+  // ── STRATEGY 1: Vercel API for base chain stats (no wallet portfolios from API) ──
+  if (isVercel() && !fetchVolume) {
+    try {
+      const resp = await fetch('/api/chain-data', { signal: AbortSignal.timeout(10000) });
+      if (resp.ok) {
+        const apiStats = await resp.json();
+        if (apiStats && apiStats.balanceUsdt !== undefined) {
+          console.log('✅ Got chain stats from /api/chain-data');
+          const result = { stats: apiStats, vipData: { portfolios: [] } };
+          writeCache(STORAGE_KEY_CHAIN_DATA, result);
+          return result;
+        }
+      }
+    } catch (e) { console.warn('chain-data API failed, using RPC:', e); }
+  }
+
+  // ── STRATEGY 2: localStorage cache for non-wallet fast path ──
+  if (!fetchVolume && monitoredWallets.length === 0) {
+    const cached = getCachedData<{ stats: Partial<ContractStats>, vipData: VipAccountsData }>(STORAGE_KEY_CHAIN_DATA, CACHE_TTL_MS);
+    if (cached) {
+      console.log('✓ Using cached chain data');
+      return cached;
+    }
+  }
+
+  // ── STRATEGY 3: Direct RPC ──
   try {
     const provider = getProvider();
 
@@ -353,13 +379,12 @@ export const fetchRealChainData = async (
 
     // 5. Derived prices
     const boxPrice = lpBalanceBox > 0 && lpBalanceUsdx > 0 ? lpBalanceUsdx / lpBalanceBox : 0;
-    const stablePeg = 1; // USDX/USDT is a stable swap pool; peg is fixed at 1:1
+    const stablePeg = 1;
     const totalUsd = (balanceXoc * TOKEN_PRICE_USD) + balanceUsdt + balanceUsdx + (balanceBox * boxPrice);
 
-    // 6. 24h volume from FlashSwap logs
+    // 6. 24h volume from FlashSwap logs (only if requested)
     let volume24h = 0;
     let fees24h = 0;
-
     if (fetchVolume) {
       try {
         const logs = await getSwapTransferLogs(provider);
@@ -394,11 +419,9 @@ export const fetchRealChainData = async (
 
     const result = {
       stats: {
-        currentBalance: balanceXoc,
-        balanceUsdt, balanceUsdx, balanceBox,
-        lpBalanceBox, lpBalanceUsdx, boxPrice,
-        lp2BalanceUsdx, lp2BalanceUsdt, stablePeg,
-        balanceUsd: totalUsd, volume24h, fees24h,
+        currentBalance: balanceXoc, balanceUsdt, balanceUsdx, balanceBox,
+        lpBalanceBox, lpBalanceUsdx, boxPrice, lp2BalanceUsdx, lp2BalanceUsdt,
+        stablePeg, balanceUsd: totalUsd, volume24h, fees24h
       },
       vipData: { portfolios },
     };
@@ -408,7 +431,6 @@ export const fetchRealChainData = async (
 
   } catch (error) {
     console.error("fetchRealChainData failed:", error);
-    // Fall back to stale localStorage data
     const stale = getCachedData<{ stats: Partial<ContractStats>, vipData: VipAccountsData }>(
       STORAGE_KEY_CHAIN_DATA, STALE_CACHE_TTL_MS
     );
@@ -417,63 +439,9 @@ export const fetchRealChainData = async (
   }
 };
 
-// ============================================================
-// fetchLargeTransactions
-// ============================================================
-export const fetchLargeTransactions = async (): Promise<LargeTransaction[]> => {
-  try {
-    const provider = getProvider();
-    const currentBlock = await retryOperation(p => p.getBlockNumber());
-    const logs = await getSwapTransferLogs(provider);
 
-    if (!logs) {
-      const stale = getCachedData<LargeTransaction[]>(STORAGE_KEY_LARGE_TXS, STALE_CACHE_TTL_MS);
-      return stale || [];
-    }
 
-    const now = Date.now();
-    const transactions: LargeTransaction[] = [];
 
-    for (const log of logs.usdtIn) {
-      const value = parseFloat(formatUnits(BigInt(log.amount), log.decimals));
-      if (value > 1000) {
-        transactions.push({
-          hash: log.txHash,
-          from: log.from,
-          to: FLASH_SWAP_ADDRESS,
-          value,
-          symbol: 'USDT' as 'USDT' | 'USDX',
-          timestamp: now - ((currentBlock - log.blockNumber) * 3000),
-          blockNumber: log.blockNumber,
-        });
-      }
-    }
-
-    for (const log of logs.usdxIn) {
-      const value = parseFloat(formatUnits(BigInt(log.amount), log.decimals));
-      if (value > 1000) {
-        transactions.push({
-          hash: log.txHash,
-          from: log.from,
-          to: FLASH_SWAP_ADDRESS,
-          value,
-          symbol: 'USDX' as 'USDT' | 'USDX',
-          timestamp: now - ((currentBlock - log.blockNumber) * 3000),
-          blockNumber: log.blockNumber,
-        });
-      }
-    }
-
-    const sorted = transactions.sort((a, b) => b.blockNumber - a.blockNumber);
-    writeCache(STORAGE_KEY_LARGE_TXS, sorted);
-    return sorted;
-
-  } catch (error) {
-    console.error("fetchLargeTransactions failed:", error);
-    const stale = getCachedData<LargeTransaction[]>(STORAGE_KEY_LARGE_TXS, STALE_CACHE_TTL_MS);
-    return stale || [];
-  }
-};
 
 // ============================================================
 // fetchAddressHistory
@@ -564,6 +532,10 @@ export const fetchAddressHistory = async (address: string): Promise<{
 // ============================================================
 // fetchDailySwapStats  ← THE KEY FUNCTION
 // ============================================================
+
+// Detect if we're running on Vercel (not localhost)
+const isVercel = () => typeof window !== 'undefined' && !window.location.hostname.includes('localhost');
+
 export const fetchDailySwapStats = async (): Promise<{
   todayUsdtToUsdx: number,
   todayUsdxToUsdt: number,
@@ -574,10 +546,37 @@ export const fetchDailySwapStats = async (): Promise<{
   const STATS_STORAGE_KEY = "xone_daily_swap_stats_processed";
   const empty = { todayUsdtToUsdx: 0, todayUsdxToUsdt: 0, yesterdayUsdtToUsdx: 0, yesterdayUsdxToUsdt: 0, lastUpdatedBlock: 0 };
 
+  // ── STRATEGY 1: Call Vercel serverless API endpoint (production only) ──
+  // The API runs on the server, has no CORS issues, and is cached by Vercel Edge for 5 minutes.
+  // All users share the same cached response, dramatically reducing RPC load.
+  if (isVercel()) {
+    try {
+      console.log('📡 Fetching swap stats from /api/swap-stats...');
+      const resp = await fetch('/api/swap-stats', { signal: AbortSignal.timeout(15000) });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && (data.todayUsdtToUsdx !== undefined)) {
+          console.log('✅ Got swap stats from API');
+          writeCache(STATS_STORAGE_KEY, data);
+          return data;
+        }
+      }
+    } catch (e) {
+      console.warn('API fetch failed, falling back to RPC:', e);
+    }
+  }
+
+  // ── STRATEGY 2: localStorage cache (works offline / as fallback) ──
+  const cached = getCachedData<typeof empty>(STATS_STORAGE_KEY, CACHE_TTL_MS);
+  if (cached) {
+    console.log('✓ Using localStorage swap stats cache');
+    return cached;
+  }
+
+  // ── STRATEGY 3: Direct RPC (local dev or API unreachable) ──
   try {
     const provider = getProvider();
 
-    // 1. Get current block time for day boundary
     let currentBlock = 0;
     let currentTimestampSec = Math.floor(Date.now() / 1000);
 
@@ -586,76 +585,120 @@ export const fetchDailySwapStats = async (): Promise<{
       const blockData = await retryOperation(p => p.getBlock(currentBlock));
       if (blockData) currentTimestampSec = blockData.timestamp;
     } catch (e) {
-      console.warn("Could not fetch current block, using system time for day boundaries");
-      // Use system time as fallback — blocks still filterable
+      console.warn("Could not fetch current block, using system time");
     }
 
-    // 2. Calculate today/yesterday boundaries (UTC+8 Beijing)
     const UTC8 = 8 * 3600;
     const nowUtc8Ms = (currentTimestampSec + UTC8) * 1000;
     const todayStartUtcSec = new Date(nowUtc8Ms).setUTCHours(0, 0, 0, 0) / 1000 - UTC8;
     const yesterdayStartUtcSec = todayStartUtcSec - 86400;
 
-    // 3. Estimate block numbers
-    let todayStartBlock = 0;
-    let yesterdayStartBlock = 0;
+    let todayStartBlock = Math.max(0, currentBlock - 28800);
+    let yesterdayStartBlock = Math.max(0, currentBlock - 57600);
     try {
       [todayStartBlock, yesterdayStartBlock] = await Promise.all([
         estimateBlockByTimestamp(provider, todayStartUtcSec),
         estimateBlockByTimestamp(provider, yesterdayStartUtcSec),
       ]);
       console.log(`📅 Blocks → yesterday: ${yesterdayStartBlock}, today: ${todayStartBlock}, current: ${currentBlock}`);
-    } catch (e) {
-      console.warn("Block estimation failed, using approximate values");
-      todayStartBlock = Math.max(0, currentBlock - 28800);
-      yesterdayStartBlock = Math.max(0, currentBlock - 57600);
-    }
+    } catch { /* use approximates */ }
 
-    // 4. Get swap Transfer logs (with localStorage fallback)
     const swapLogs = await getSwapTransferLogs(provider);
 
     if (!swapLogs) {
-      // Try stale processed stats cache
       const stale = getCachedData<typeof empty>(STATS_STORAGE_KEY, STALE_CACHE_TTL_MS);
-      if (stale) { console.warn("⚠️ Returning stale daily stats"); return stale; }
+      if (stale) { console.warn("⚠️ Using stale daily stats"); return stale; }
       return { ...empty, lastUpdatedBlock: currentBlock };
     }
 
-    // 5. Aggregate by time window
     const stats = { ...empty, lastUpdatedBlock: currentBlock };
 
     for (const log of swapLogs.usdtIn) {
       const val = parseFloat(formatUnits(BigInt(log.amount), log.decimals));
-      if (log.blockNumber >= todayStartBlock) {
-        stats.todayUsdtToUsdx += val;
-      } else if (log.blockNumber >= yesterdayStartBlock) {
-        stats.yesterdayUsdtToUsdx += val;
-      }
+      if (log.blockNumber >= todayStartBlock) stats.todayUsdtToUsdx += val;
+      else if (log.blockNumber >= yesterdayStartBlock) stats.yesterdayUsdtToUsdx += val;
     }
 
     for (const log of swapLogs.usdxIn) {
       const val = parseFloat(formatUnits(BigInt(log.amount), log.decimals));
-      if (log.blockNumber >= todayStartBlock) {
-        stats.todayUsdxToUsdt += val;
-      } else if (log.blockNumber >= yesterdayStartBlock) {
-        stats.yesterdayUsdxToUsdt += val;
-      }
+      if (log.blockNumber >= todayStartBlock) stats.todayUsdxToUsdt += val;
+      else if (log.blockNumber >= yesterdayStartBlock) stats.yesterdayUsdxToUsdt += val;
     }
 
     console.log(`✅ Today  USDT→USDX: ${stats.todayUsdtToUsdx.toFixed(2)}, USDX→USDT: ${stats.todayUsdxToUsdt.toFixed(2)}`);
-    console.log(`✅ Yest.  USDT→USDX: ${stats.yesterdayUsdtToUsdx.toFixed(2)}, USDX→USDT: ${stats.yesterdayUsdxToUsdt.toFixed(2)}`);
-
-    // Persist processed result for instant reads next time
     writeCache(STATS_STORAGE_KEY, stats);
     return stats;
 
   } catch (e) {
     console.error("Error in fetchDailySwapStats:", e);
-
-    // Always return last known good data if available
-    const stale = getCachedData<typeof empty>("xone_daily_swap_stats_processed", STALE_CACHE_TTL_MS);
-    if (stale) { console.warn("⚠️ Returning stale daily stats due to error"); return stale; }
-
+    const stale = getCachedData<typeof empty>(STATS_STORAGE_KEY, STALE_CACHE_TTL_MS);
+    if (stale) { console.warn("⚠️ Using stale daily stats (error fallback)"); return stale; }
     return empty;
+  }
+};
+
+// ============================================================
+// fetchLargeTransactions (API-first)
+// ============================================================
+export const fetchLargeTransactions = async (): Promise<LargeTransaction[]> => {
+  // ── STRATEGY 1: Vercel API ──
+  if (isVercel()) {
+    try {
+      const resp = await fetch('/api/large-txs', { signal: AbortSignal.timeout(15000) });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data?.transactions?.length > 0) {
+          writeCache(STORAGE_KEY_LARGE_TXS, data.transactions);
+          return data.transactions;
+        }
+      }
+    } catch (e) { console.warn('large-txs API failed:', e); }
+  }
+
+  // ── STRATEGY 2: localStorage cache ──
+  const cached = getCachedData<LargeTransaction[]>(STORAGE_KEY_LARGE_TXS, CACHE_TTL_MS);
+  if (cached && cached.length > 0) return cached;
+
+  // ── STRATEGY 3: Direct RPC ──
+  try {
+    const provider = getProvider();
+    const currentBlock = await retryOperation(p => p.getBlockNumber());
+    const logs = await getSwapTransferLogs(provider);
+
+    if (!logs) {
+      const stale = getCachedData<LargeTransaction[]>(STORAGE_KEY_LARGE_TXS, STALE_CACHE_TTL_MS);
+      return stale || [];
+    }
+
+    const now = Date.now();
+    const transactions: LargeTransaction[] = [];
+
+    for (const log of logs.usdtIn) {
+      const value = parseFloat(formatUnits(BigInt(log.amount), log.decimals));
+      if (value > 1000) {
+        transactions.push({
+          hash: log.txHash, from: log.from, to: FLASH_SWAP_ADDRESS, value,
+          symbol: 'USDT' as 'USDT' | 'USDX', timestamp: now - ((currentBlock - log.blockNumber) * 3000), blockNumber: log.blockNumber
+        });
+      }
+    }
+    for (const log of logs.usdxIn) {
+      const value = parseFloat(formatUnits(BigInt(log.amount), log.decimals));
+      if (value > 1000) {
+        transactions.push({
+          hash: log.txHash, from: log.from, to: FLASH_SWAP_ADDRESS, value,
+          symbol: 'USDX' as 'USDT' | 'USDX', timestamp: now - ((currentBlock - log.blockNumber) * 3000), blockNumber: log.blockNumber
+        });
+      }
+    }
+
+    const sorted = transactions.sort((a, b) => b.blockNumber - a.blockNumber);
+    writeCache(STORAGE_KEY_LARGE_TXS, sorted);
+    return sorted;
+
+  } catch (error) {
+    console.error("fetchLargeTransactions failed:", error);
+    const stale = getCachedData<LargeTransaction[]>(STORAGE_KEY_LARGE_TXS, STALE_CACHE_TTL_MS);
+    return stale || [];
   }
 };

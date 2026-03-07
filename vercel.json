@@ -1,0 +1,57 @@
+{
+    "version": 2,
+    "buildCommand": "npm run build",
+    "outputDirectory": "dist",
+    "framework": "vite",
+    "rewrites": [
+        {
+            "source": "/api/(.*)",
+            "destination": "/api/$1"
+        },
+        {
+            "source": "/((?!api/).*)",
+            "destination": "/index.html"
+        }
+    ],
+    "headers": [
+        {
+            "source": "/api/chain-data",
+            "headers": [
+                {
+                    "key": "Cache-Control",
+                    "value": "s-maxage=60, stale-while-revalidate=120"
+                },
+                {
+                    "key": "Access-Control-Allow-Origin",
+                    "value": "*"
+                }
+            ]
+        },
+        {
+            "source": "/api/swap-stats",
+            "headers": [
+                {
+                    "key": "Cache-Control",
+                    "value": "s-maxage=300, stale-while-revalidate=600"
+                },
+                {
+                    "key": "Access-Control-Allow-Origin",
+                    "value": "*"
+                }
+            ]
+        },
+        {
+            "source": "/api/large-txs",
+            "headers": [
+                {
+                    "key": "Cache-Control",
+                    "value": "s-maxage=300, stale-while-revalidate=600"
+                },
+                {
+                    "key": "Access-Control-Allow-Origin",
+                    "value": "*"
+                }
+            ]
+        }
+    ]
+}
