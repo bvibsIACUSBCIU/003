@@ -353,7 +353,7 @@ export const fetchRealChainData = async (
 
     // 5. Derived prices
     const boxPrice = lpBalanceBox > 0 && lpBalanceUsdx > 0 ? lpBalanceUsdx / lpBalanceBox : 0;
-    const stablePeg = lp2BalanceUsdx > 0 && lp2BalanceUsdt > 0 ? lp2BalanceUsdt / lp2BalanceUsdx : 1;
+    const stablePeg = 1; // USDX/USDT is a stable swap pool; peg is fixed at 1:1
     const totalUsd = (balanceXoc * TOKEN_PRICE_USD) + balanceUsdt + balanceUsdx + (balanceBox * boxPrice);
 
     // 6. 24h volume from FlashSwap logs

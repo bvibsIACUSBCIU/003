@@ -47,7 +47,7 @@ const translations: Record<Language, Record<string, string>> = {
     invalidConfig: 'Invalid configuration file.',
     volume24h: '24h Volume',
     estFees: 'Est. Fees (0.3%)',
-    poolLiquidity: 'Pool Liquidity (TVL)',
+    poolLiquidity: 'Pool Liquidity',
     walletDetails: 'Wallet Analysis',
     recentActivity: 'Recent On-Chain Activity',
     viewExplorer: 'View on Explorer',
@@ -116,7 +116,7 @@ const translations: Record<Language, Record<string, string>> = {
     invalidConfig: '无效的配置文件。',
     volume24h: '24h 交易量',
     estFees: '预估手续费 (0.3%)',
-    poolLiquidity: '池底总流动性 (TVL)',
+    poolLiquidity: '池底总流动性',
     walletDetails: '钱包深度分析',
     recentActivity: '近期链上交互记录',
     viewExplorer: '跳转浏览器',
@@ -152,7 +152,7 @@ const translations: Record<Language, Record<string, string>> = {
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
 export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [lang, setLang] = useState<Language>('zh'); 
+  const [lang, setLang] = useState<Language>('zh');
 
   const toggleLanguage = () => {
     setLang(prev => prev === 'en' ? 'zh' : 'en');

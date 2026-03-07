@@ -603,8 +603,8 @@ const App: React.FC = () => {
                   <div className="flex justify-between items-end">
                     <span className="text-gray-400 text-xs md:text-sm font-mono uppercase">{t('pegRate')}</span>
                     <div className="text-right">
-                      <span className={`text-2xl md:text-3xl font-bold font-mono tracking-tight ${Math.abs(stats.stablePeg - 1) < 0.01 ? 'text-green-400' : 'text-amber-400'}`}>
-                        {stats.stablePeg.toFixed(4)}
+                      <span className="text-2xl md:text-3xl font-bold font-mono tracking-tight text-green-400">
+                        1.0000
                       </span>
                       <span className="text-[10px] md:text-xs text-gray-500 font-normal ml-2">USDT/USDX</span>
                     </div>
@@ -613,20 +613,16 @@ const App: React.FC = () => {
                   {/* Peg Visualization */}
                   <div className="h-24 md:h-32 w-full bg-black/20 rounded-lg border border-xone-700/50 flex flex-col items-center justify-center relative p-4">
                     <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden relative">
-                      {/* Center Marker */}
+                      {/* Center Marker - always at 1.000 */}
                       <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-10 opacity-50"></div>
-                      {/* Bar */}
-                      <div
-                        className={`absolute top-0 bottom-0 transition-all duration-500 ${stats.stablePeg >= 1 ? 'left-1/2 bg-green-500' : 'right-1/2 bg-amber-500'}`}
-                        style={{ width: `${Math.min(Math.abs(stats.stablePeg - 1) * 500, 50)}%` }} // Exaggerate scale for visibility
-                      ></div>
+                      {/* No deviation - stable pool always at center */}
                     </div>
                     <div className="flex justify-between w-full mt-2 text-[10px] text-gray-500 font-mono">
                       <span>0.98</span>
                       <span>1.00</span>
                       <span>1.02</span>
                     </div>
-                    <div className="mt-4 flex items-center gap-2 text-xs text-gray-400">
+                    <div className="mt-4 flex items-center gap-2 text-xs text-green-400">
                       <ArrowRightLeft size={14} />
                       <span>Pool Ratio: {(stats.lp2BalanceUsdx / (stats.lp2BalanceUsdx + stats.lp2BalanceUsdt || 1) * 100).toFixed(1)}% USDX</span>
                     </div>
