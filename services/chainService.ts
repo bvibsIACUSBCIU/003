@@ -205,75 +205,83 @@ let memSwapLogs: SwapTransferCache | null = null;
 
 const getSwapTransferLogs = async (provider: JsonRpcProvider): Promise<SwapTransferCache | null> => {
   const now = Date.now();
+  let cache = memSwapLogs || getCachedData<SwapTransferCache>(STORAGE_KEY_SWAP_STATS, CACHE_TTL_MS);
 
-  // 1. Return fresh in-memory cache
-  if (memSwapLogs && (now - memSwapLogs.timestamp < CACHE_TTL_MS)) {
-    console.log(`✓ In-memory swap cache (${memSwapLogs.usdtIn.length} USDT, ${memSwapLogs.usdxIn.length} USDX)`);
-    return memSwapLogs;
-  }
-
-  // 2. Return localStorage cache if not too stale
-  const stored = getCachedData<SwapTransferCache>(STORAGE_KEY_SWAP_STATS, CACHE_TTL_MS);
-  if (stored) {
-    console.log(`✓ localStorage swap cache (${stored.usdtIn.length} USDT, ${stored.usdxIn.length} USDX)`);
-    memSwapLogs = stored;
-    return stored;
-  }
-
-  // 3. Fetch from chain
   return await withLogLock(async () => {
     try {
-      console.log("🔄 Fetching FlashSwap Transfer logs from chain...");
       const currentBlock = await provider.getBlockNumber();
-      const fromBlock = Math.max(0, currentBlock - 34560); // ~24h + buffer
+      let fromBlock: number;
+
+      if (!cache) {
+        // Initial load: fetch last ~48 hours (assuming ~1.3s / block -> 133000 blocks)
+        fromBlock = Math.max(0, currentBlock - 133000);
+        console.log(`[chainService] Fresh fetch starting from block ${fromBlock}`);
+        cache = { usdtIn: [], usdxIn: [], fromBlock, toBlock: fromBlock, timestamp: 0 };
+      } else {
+        // Incremental load: only fetch what's new
+        fromBlock = cache.toBlock + 1;
+        if (fromBlock >= currentBlock) {
+          cache.timestamp = now;
+          return cache;
+        }
+        console.log(`[chainService] Incremental fetch from block ${fromBlock} to ${currentBlock}`);
+      }
 
       const usdtContract = new Contract(USDT_ADDRESS, ERC20_TRANSFER_ABI, provider);
       const usdxContract = new Contract(USDX_ADDRESS, ERC20_TRANSFER_ABI, provider);
-
       const usdtFilter = usdtContract.filters.Transfer(null, FLASH_SWAP_ADDRESS);
       const usdxFilter = usdxContract.filters.Transfer(null, FLASH_SWAP_ADDRESS);
 
-      console.log("  Fetching USDT→FlashSwap...");
-      const usdtRawLogs = await fetchLogsInChunks(usdtContract, usdtFilter, fromBlock, currentBlock);
-      console.log(`  ✓ ${usdtRawLogs.length} USDT logs`);
+      // Fetch new chunks using a larger chunk size to minimize RPC calls
+      // Public RPCs usually support 5,000-10,000 blocks per request
+      const maxProviderChunkSize = 5000;
+      let newUsdtLogs: SwapLogEntry[] = [];
+      let newUsdxLogs: SwapLogEntry[] = [];
 
-      console.log("  Fetching USDX→FlashSwap...");
-      const usdxRawLogs = await fetchLogsInChunks(usdxContract, usdxFilter, fromBlock, currentBlock);
-      console.log(`  ✓ ${usdxRawLogs.length} USDX logs`);
+      let curr = fromBlock;
+      let fails = 0;
+      while (curr <= currentBlock) {
+        const next = Math.min(curr + maxProviderChunkSize - 1, currentBlock);
+        try {
+          const uLogs = await usdtContract.queryFilter(usdtFilter, curr, next);
+          const xLogs = await usdxContract.queryFilter(usdxFilter, curr, next);
 
-      const toSwapEntry = (log: any, decimals: number): SwapLogEntry | null => {
-        if (!log.args) return null;
-        return {
-          blockNumber: log.blockNumber,
-          from: log.args[0],
-          amount: log.args[2].toString(),
-          decimals,
-          txHash: log.transactionHash,
-        };
-      };
+          for (const l of uLogs) {
+            newUsdtLogs.push({ blockNumber: l.blockNumber, from: (l as any).args[0], amount: (l as any).args[2].toString(), decimals: 6, txHash: l.transactionHash });
+          }
+          for (const l of xLogs) {
+            newUsdxLogs.push({ blockNumber: l.blockNumber, from: (l as any).args[0], amount: (l as any).args[2].toString(), decimals: 18, txHash: l.transactionHash });
+          }
 
-      const result: SwapTransferCache = {
-        usdtIn: usdtRawLogs.map(l => toSwapEntry(l, 6)).filter(Boolean) as SwapLogEntry[],
-        usdxIn: usdxRawLogs.map(l => toSwapEntry(l, 18)).filter(Boolean) as SwapLogEntry[],
-        fromBlock,
-        toBlock: currentBlock,
-        timestamp: now,
-      };
+          curr = next + 1;
+          fails = 0;
+        } catch (e) {
+          fails++;
+          if (fails > 3) throw new Error("Too many RPC failures");
+          console.warn("[chainService] RPC Error, backing off 2s...");
+          await new Promise(r => setTimeout(r, 2000));
+          rotateProvider();
+          usdtContract.connect(getProvider());
+          usdxContract.connect(getProvider());
+        }
+      }
 
-      memSwapLogs = result;
-      writeCache(STORAGE_KEY_SWAP_STATS, result);
-      return result;
+      // Merge and cull old logs (keep only last 48h to prevent cache bloat)
+      const oldestKeptBlock = currentBlock - 100000;
+      cache.usdtIn.push(...newUsdtLogs);
+      cache.usdxIn.push(...newUsdxLogs);
+      cache.usdtIn = cache.usdtIn.filter(l => l.blockNumber >= oldestKeptBlock);
+      cache.usdxIn = cache.usdxIn.filter(l => l.blockNumber >= oldestKeptBlock);
+      cache.toBlock = currentBlock;
+      cache.timestamp = now;
+
+      memSwapLogs = cache;
+      writeCache(STORAGE_KEY_SWAP_STATS, cache);
+      return cache;
 
     } catch (e) {
       console.error("FlashSwap log fetch failed:", e);
-
-      // FALLBACK: return stale localStorage data rather than nothing
-      const stale = getCachedData<SwapTransferCache>(STORAGE_KEY_SWAP_STATS, STALE_CACHE_TTL_MS);
-      if (stale) {
-        console.warn("⚠️ Returning stale swap cache (up to 1h old) due to RPC error");
-        return stale;
-      }
-      return null;
+      return cache || null;
     }
   });
 };
@@ -287,7 +295,7 @@ const estimateBlockByTimestamp = async (provider: JsonRpcProvider, targetTimesta
     const currentBlockData = await provider.getBlock(currentBlock);
     if (!currentBlockData) return currentBlock;
 
-    const avgBlockTime = 3.0; // XONE ≈ 3s/block
+    const avgBlockTime = 1.3; // XONE ≈ 1.3s/block
     let estimate = currentBlock - Math.floor((currentBlockData.timestamp - targetTimestampSec) / avgBlockTime);
     estimate = Math.max(0, estimate);
 
@@ -588,20 +596,10 @@ export const fetchDailySwapStats = async (): Promise<{
       console.warn("Could not fetch current block, using system time");
     }
 
-    const UTC8 = 8 * 3600;
-    const nowUtc8Ms = (currentTimestampSec + UTC8) * 1000;
-    const todayStartUtcSec = new Date(nowUtc8Ms).setUTCHours(0, 0, 0, 0) / 1000 - UTC8;
+    const UTC7_OFFSET_SEC = 7 * 3600;
+    const nowUtc7Ms = (currentTimestampSec + UTC7_OFFSET_SEC) * 1000;
+    const todayStartUtcSec = Math.floor(new Date(nowUtc7Ms).setUTCHours(0, 0, 0, 0) / 1000) - UTC7_OFFSET_SEC;
     const yesterdayStartUtcSec = todayStartUtcSec - 86400;
-
-    let todayStartBlock = Math.max(0, currentBlock - 28800);
-    let yesterdayStartBlock = Math.max(0, currentBlock - 57600);
-    try {
-      [todayStartBlock, yesterdayStartBlock] = await Promise.all([
-        estimateBlockByTimestamp(provider, todayStartUtcSec),
-        estimateBlockByTimestamp(provider, yesterdayStartUtcSec),
-      ]);
-      console.log(`📅 Blocks → yesterday: ${yesterdayStartBlock}, today: ${todayStartBlock}, current: ${currentBlock}`);
-    } catch { /* use approximates */ }
 
     const swapLogs = await getSwapTransferLogs(provider);
 
@@ -613,19 +611,52 @@ export const fetchDailySwapStats = async (): Promise<{
 
     const stats = { ...empty, lastUpdatedBlock: currentBlock };
 
+    // Collect all unique block numbers from logs
+    const uniqueBlocks = Array.from(new Set([
+      ...swapLogs.usdtIn.map(l => l.blockNumber),
+      ...swapLogs.usdxIn.map(l => l.blockNumber)
+    ]));
+
+    // Fetch EXACT block timestamps from the RPC
+    const blockTimestamps: Record<number, number> = {};
+    const chunkSize = 15;
+    for (let i = 0; i < uniqueBlocks.length; i += chunkSize) {
+      const batch = uniqueBlocks.slice(i, i + chunkSize);
+      await Promise.all(batch.map(async (b) => {
+        try {
+          const block = await retryOperation(p => p.getBlock(b), 1, 500);
+          if (block) {
+            blockTimestamps[b] = block.timestamp;
+          }
+        } catch (e) {
+          console.warn(`Failed to fetch exact block timestamp: ${b}`);
+        }
+      }));
+      await new Promise(r => setTimeout(r, 100)); // Be polite to RPC
+    }
+
+    const avgBlockTime = 1.3;
+    const exactTs = (blockNum: number) => {
+      if (blockTimestamps[blockNum]) return blockTimestamps[blockNum];
+      return currentTimestampSec - Math.floor((currentBlock - blockNum) * avgBlockTime);
+    };
+
     for (const log of swapLogs.usdtIn) {
       const val = parseFloat(formatUnits(BigInt(log.amount), log.decimals));
-      if (log.blockNumber >= todayStartBlock) stats.todayUsdtToUsdx += val;
-      else if (log.blockNumber >= yesterdayStartBlock) stats.yesterdayUsdtToUsdx += val;
+      const ts = exactTs(log.blockNumber);
+      if (ts >= todayStartUtcSec) stats.todayUsdtToUsdx += val;
+      else if (ts >= yesterdayStartUtcSec) stats.yesterdayUsdtToUsdx += val;
     }
 
     for (const log of swapLogs.usdxIn) {
       const val = parseFloat(formatUnits(BigInt(log.amount), log.decimals));
-      if (log.blockNumber >= todayStartBlock) stats.todayUsdxToUsdt += val;
-      else if (log.blockNumber >= yesterdayStartBlock) stats.yesterdayUsdxToUsdt += val;
+      const ts = exactTs(log.blockNumber);
+      if (ts >= todayStartUtcSec) stats.todayUsdxToUsdt += val;
+      else if (ts >= yesterdayStartUtcSec) stats.yesterdayUsdxToUsdt += val;
     }
 
-    console.log(`✅ Today  USDT→USDX: ${stats.todayUsdtToUsdx.toFixed(2)}, USDX→USDT: ${stats.todayUsdxToUsdt.toFixed(2)}`);
+    console.log(`✅ UTC+7 Today USDT→USDX: ${stats.todayUsdtToUsdx.toFixed(2)}, USDX→USDT: ${stats.todayUsdxToUsdt.toFixed(2)}`);
+    console.log(`✅ UTC+7 Yest  USDT→USDX: ${stats.yesterdayUsdtToUsdx.toFixed(2)}, USDX→USDT: ${stats.yesterdayUsdxToUsdt.toFixed(2)}`);
     writeCache(STATS_STORAGE_KEY, stats);
     return stats;
 
@@ -678,7 +709,7 @@ export const fetchLargeTransactions = async (): Promise<LargeTransaction[]> => {
       if (value > 1000) {
         transactions.push({
           hash: log.txHash, from: log.from, to: FLASH_SWAP_ADDRESS, value,
-          symbol: 'USDT' as 'USDT' | 'USDX', timestamp: now - ((currentBlock - log.blockNumber) * 3000), blockNumber: log.blockNumber
+          symbol: 'USDT' as 'USDT' | 'USDX', timestamp: now - Math.floor((currentBlock - log.blockNumber) * 1300), blockNumber: log.blockNumber
         });
       }
     }
@@ -687,7 +718,7 @@ export const fetchLargeTransactions = async (): Promise<LargeTransaction[]> => {
       if (value > 1000) {
         transactions.push({
           hash: log.txHash, from: log.from, to: FLASH_SWAP_ADDRESS, value,
-          symbol: 'USDX' as 'USDT' | 'USDX', timestamp: now - ((currentBlock - log.blockNumber) * 3000), blockNumber: log.blockNumber
+          symbol: 'USDX' as 'USDT' | 'USDX', timestamp: now - Math.floor((currentBlock - log.blockNumber) * 1300), blockNumber: log.blockNumber
         });
       }
     }

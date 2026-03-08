@@ -44,8 +44,8 @@ const fetchLogsInChunks = async (contract: Contract, filter: any, start: number,
             // Small server-side delay to be polite to the RPC
             await new Promise(r => setTimeout(r, 200));
         } catch (e: any) {
-            chunkSize = Math.max(50, Math.floor(chunkSize / 2));
-            if (chunkSize < 50) { curr += 50; chunkSize = 200; }
+            chunkSize = Math.max(500, Math.floor(chunkSize / 2));
+            if (chunkSize < 500) { throw new Error("RPC failed repeatedly"); }
             await new Promise(r => setTimeout(r, 2000));
         }
     }
@@ -65,24 +65,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (!blockData) throw new Error("Failed to get block data");
 
-        // Day boundaries in UTC+8 (Beijing)
-        const UTC8 = 8 * 3600;
-        const nowUtc8Ms = (blockData.timestamp + UTC8) * 1000;
-        const todayStartMs = new Date(nowUtc8Ms).setUTCHours(0, 0, 0, 0);
-        const todayStartUtcSec = todayStartMs / 1000 - UTC8;
+        const UTC7_OFFSET_SEC = 7 * 3600;
+        const nowUtc7Ms = (blockData.timestamp + UTC7_OFFSET_SEC) * 1000;
+        const todayStartUtcSec = Math.floor(new Date(nowUtc7Ms).setUTCHours(0, 0, 0, 0) / 1000) - UTC7_OFFSET_SEC;
         const yesterdayStartUtcSec = todayStartUtcSec - 86400;
 
-        // Estimate block numbers (~3s/block on XONE)
-        const avgBlockTime = 3;
-        const todayStartBlock = Math.max(0,
-            currentBlock - Math.floor((blockData.timestamp - todayStartUtcSec) / avgBlockTime)
-        );
-        const yesterdayStartBlock = Math.max(0,
-            currentBlock - Math.floor((blockData.timestamp - yesterdayStartUtcSec) / avgBlockTime)
-        );
-
-        // Fetch from ~yesterday start
-        const fromBlock = Math.max(0, yesterdayStartBlock - 500); // small buffer
+        // Instead of average block time estimation to find the start block, 
+        // we fetch a very safe fixed range that absolutely covers 48 hours.
+        // Even at an extremely fast 1 sec/block, 48 hours = 172,800 blocks. 
+        // 175,000 guarantees we capture the entire "yesterday".
+        const SAFE_BLOCKS_48H = 175000;
+        const fromBlock = Math.max(0, currentBlock - SAFE_BLOCKS_48H);
 
         const usdtContract = new Contract(USDT_ADDRESS, TRANSFER_ABI, provider);
         const usdxContract = new Contract(USDX_ADDRESS, TRANSFER_ABI, provider);
@@ -100,18 +93,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let yesterdayUsdtToUsdx = 0;
         let yesterdayUsdxToUsdt = 0;
 
+        // Collect all unique block numbers from logs
+        const uniqueBlocks = Array.from(new Set([
+            ...usdtLogs.map(l => l.blockNumber),
+            ...usdxLogs.map(l => l.blockNumber)
+        ]));
+
+        // Fetch EXACT block timestamps from the RPC
+        const blockTimestamps: Record<number, number> = {};
+        const chunkSize = 15;
+        for (let i = 0; i < uniqueBlocks.length; i += chunkSize) {
+            const batch = uniqueBlocks.slice(i, i + chunkSize);
+            await Promise.all(batch.map(async (b) => {
+                try {
+                    const block = await provider.getBlock(b);
+                    if (block) {
+                        blockTimestamps[b] = block.timestamp;
+                    }
+                } catch (e) {
+                    console.warn(`Failed to fetch exact block: ${b}`);
+                }
+            }));
+            // Polite delay
+            await new Promise(r => setTimeout(r, 100));
+        }
+
+        // Fallback estimator if RPC fails for a specific block
+        const avgBlockTime = 1.3;
+        const exactTs = (blockNum: number) => {
+            if (blockTimestamps[blockNum]) return blockTimestamps[blockNum];
+            return blockData.timestamp - Math.floor((currentBlock - blockNum) * avgBlockTime);
+        };
+
         for (const log of usdtLogs) {
             if (!log.args) continue;
             const val = parseFloat(formatUnits(log.args[2], 6));
-            if (log.blockNumber >= todayStartBlock) todayUsdtToUsdx += val;
-            else if (log.blockNumber >= yesterdayStartBlock) yesterdayUsdtToUsdx += val;
+            const ts = exactTs(log.blockNumber);
+            if (ts >= todayStartUtcSec) todayUsdtToUsdx += val;
+            else if (ts >= yesterdayStartUtcSec) yesterdayUsdtToUsdx += val;
         }
 
         for (const log of usdxLogs) {
             if (!log.args) continue;
             const val = parseFloat(formatUnits(log.args[2], 18));
-            if (log.blockNumber >= todayStartBlock) todayUsdxToUsdt += val;
-            else if (log.blockNumber >= yesterdayStartBlock) yesterdayUsdxToUsdt += val;
+            const ts = exactTs(log.blockNumber);
+            if (ts >= todayStartUtcSec) todayUsdxToUsdt += val;
+            else if (ts >= yesterdayStartUtcSec) yesterdayUsdxToUsdt += val;
         }
 
         // Cache-Control: s-maxage=300 means Vercel Edge caches this for 5 minutes
@@ -126,9 +153,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             yesterdayUsdtToUsdx,
             yesterdayUsdxToUsdt,
             lastUpdatedBlock: currentBlock,
-            generatedAt: Date.now(),
-            todayStartBlock,
-            yesterdayStartBlock,
+            generatedAt: Date.now()
         });
 
     } catch (e: any) {
