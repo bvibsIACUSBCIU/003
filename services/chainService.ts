@@ -596,9 +596,9 @@ export const fetchDailySwapStats = async (): Promise<{
       console.warn("Could not fetch current block, using system time");
     }
 
+    // Use pure modular arithmetic to determine UTC+7 00:00 to prevent local JS Date time zone issues.
     const UTC7_OFFSET_SEC = 7 * 3600;
-    const nowUtc7Ms = (currentTimestampSec + UTC7_OFFSET_SEC) * 1000;
-    const todayStartUtcSec = Math.floor(new Date(nowUtc7Ms).setUTCHours(0, 0, 0, 0) / 1000) - UTC7_OFFSET_SEC;
+    const todayStartUtcSec = currentTimestampSec - ((currentTimestampSec + UTC7_OFFSET_SEC) % 86400);
     const yesterdayStartUtcSec = todayStartUtcSec - 86400;
 
     const swapLogs = await getSwapTransferLogs(provider);

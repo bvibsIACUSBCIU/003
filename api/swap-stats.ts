@@ -65,9 +65,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (!blockData) throw new Error("Failed to get block data");
 
+        // Use pure modular arithmetic to determine UTC+7 00:00 to prevent any local JS Date time zone issues.
         const UTC7_OFFSET_SEC = 7 * 3600;
-        const nowUtc7Ms = (blockData.timestamp + UTC7_OFFSET_SEC) * 1000;
-        const todayStartUtcSec = Math.floor(new Date(nowUtc7Ms).setUTCHours(0, 0, 0, 0) / 1000) - UTC7_OFFSET_SEC;
+        const todayStartUtcSec = blockData.timestamp - ((blockData.timestamp + UTC7_OFFSET_SEC) % 86400);
         const yesterdayStartUtcSec = todayStartUtcSec - 86400;
 
         // Instead of average block time estimation to find the start block, 
